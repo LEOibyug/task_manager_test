@@ -26,6 +26,17 @@ class SyncService:
         output_source = str(PurePosixPath(sub_repo) / "output" / job.experiment)
         output_target = str(PurePosixPath(main_repo) / "output")
         log_target = self._map_log_target(main_repo=main_repo, sub_repo=sub_repo, log_path=job.log_path)
+        if logger is not None:
+            logger(
+                {
+                    "stage": "stdout",
+                    "username": job.account,
+                    "message": (
+                        f"准备从副账户 {job.account} 发起同步。"
+                        f" 产出目录 {output_source} -> {output_target}，日志文件 {job.log_path} -> {log_target}"
+                    ),
+                }
+            )
 
         self._run_sub(
             job.account,

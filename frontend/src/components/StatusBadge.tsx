@@ -1,6 +1,13 @@
 import type { JobState } from "../types";
 
 export function StatusBadge({ status }: { status: JobState }) {
-  return <span className={`status-badge status-badge--${status.toLowerCase()}`}>{status}</span>;
+  const labelMap: Record<JobState, string> = {
+    RUNNING: "运行中",
+    PENDING: "排队中",
+    COMPLETED: "已完成",
+    FAILED: "失败",
+    CANCELLED: "已取消",
+    UNKNOWN: "未知",
+  };
+  return <span className={`status-badge status-badge--${status.toLowerCase()}`}>{labelMap[status]}</span>;
 }
-

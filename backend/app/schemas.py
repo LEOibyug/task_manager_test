@@ -6,7 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-JobState = Literal["RUNNING", "PENDING", "COMPLETED", "FAILED", "UNKNOWN"]
+JobState = Literal["RUNNING", "PENDING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]
+GpuNode = Literal["gpu1", "gpu2", "gpu3"]
 
 
 class AppConfig(BaseModel):
@@ -62,6 +63,7 @@ class JobRecord(BaseModel):
     resource_usage: str | None = None
     max_runtime_hours: int = 48
     log_path: str | None = None
+    log_path_template: str | None = None
     job_name: str | None = None
     output_path_hint: str | None = None
     synced: bool = False
@@ -77,6 +79,7 @@ class SubmitJobRequest(BaseModel):
     experiment_name: str
     script_path: str
     account: str
+    preferred_gpu_node: GpuNode | None = None
 
 
 class SubmitJobResponse(BaseModel):

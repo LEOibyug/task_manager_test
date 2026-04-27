@@ -7,9 +7,19 @@ interface JobTableProps {
   onSelect: (job: JobRecord) => void;
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
+  syncingJobIds: string[];
+  cancellingJobIds: string[];
 }
 
-export function JobTable({ jobs, selectedJobId, onSelect, onSync, onCancel }: JobTableProps) {
+export function JobTable({
+  jobs,
+  selectedJobId,
+  onSelect,
+  onSync,
+  onCancel,
+  syncingJobIds,
+  cancellingJobIds,
+}: JobTableProps) {
   return (
     <div className="table-shell">
       <table className="job-table">
@@ -19,6 +29,7 @@ export function JobTable({ jobs, selectedJobId, onSelect, onSync, onCancel }: Jo
             <th>账户</th>
             <th>实验</th>
             <th>状态</th>
+            <th>同步</th>
             <th>运行时长</th>
             <th>节点</th>
             <th>时限</th>
@@ -26,7 +37,10 @@ export function JobTable({ jobs, selectedJobId, onSelect, onSync, onCancel }: Jo
           </tr>
         </thead>
         <tbody>
-          {jobs.map((job) => (
+          {jobs.map((job) => {
+            const isSyncing = syncingJobIds.includes(job.job_id);
+            const isCancelling = cancellingJobIds.includes(job.job_id);
+            return (
             <tr
               key={job.job_id}
               className={selectedJobId === job.job_id ? "is-selected" : ""}
@@ -38,6 +52,7 @@ export function JobTable({ jobs, selectedJobId, onSelect, onSync, onCancel }: Jo
               <td>
                 <StatusBadge status={job.status} />
               </td>
+              <td>{job.synced ? "已同步" : job.account === "main" ? "主账户任务" : "未同步"}</td>
               <td>{job.runtime ?? "-"}</td>
               <td>{job.nodes.join(", ") || "-"}</td>
               <td>{job.max_runtime_hours}h</td>
@@ -45,28 +60,29 @@ export function JobTable({ jobs, selectedJobId, onSelect, onSync, onCancel }: Jo
                 <div className="table-actions">
                   <button
                     className="ghost-button"
-                    disabled={job.status !== "COMPLETED" || job.synced}
+                    disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling}
                     onClick={(event) => {
                       event.stopPropagation();
                       onSync(job);
                     }}
                   >
-                    {job.synced ? "已同步" : "同步"}
+                    {job.synced ? "已同步" : isSyncing ? "同步中..." : "同步"}
                   </button>
                   <button
                     className="ghost-button danger-button"
-                    disabled={!["RUNNING", "PENDING"].includes(job.status)}
+                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(job);
                     }}
                   >
-                    取消
+                    {isCancelling ? "取消中..." : "取消"}
                   </button>
                 </div>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

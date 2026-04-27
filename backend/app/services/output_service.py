@@ -23,20 +23,36 @@ class OutputService:
             node.children.append(child)
         return node
 
+    def _repo_path(self, job) -> str:
+        return self.job_service.config_service.load().repo_paths.get(job.account, "")
+
+    def _candidate_output_paths(self, job) -> list[str]:
+        repo_path = self._repo_path(job)
+        candidates: list[str] = []
+        if job.output_path_hint:
+            if job.output_path_hint.startswith("/"):
+                if "/output/sbatch/" not in job.output_path_hint:
+                    candidates.append(job.output_path_hint)
+            elif repo_path:
+                candidate_path = str(PurePosixPath(repo_path) / job.output_path_hint)
+                if "/output/sbatch/" not in candidate_path:
+                    candidates.append(candidate_path)
+        if repo_path:
+            candidates.append(str(PurePosixPath(repo_path) / "output" / job.experiment))
+        seen: list[str] = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.append(candidate)
+        return seen
+
     def get_tree(self, job_id: str) -> OutputTreeResponse:
         job = self.job_service.database.get_job(job_id)
         if job is None:
             raise SSHError(f"Unknown job id: {job_id}")
-        if not job.output_path_hint:
-            raise SSHError(f"Output path is not available for job {job_id}")
-        root_path = job.output_path_hint
-        if not root_path.startswith("/"):
-            repo_path = self.job_service.config_service.load().repo_paths.get(job.account, "")
-            root_path = str(PurePosixPath(repo_path) / root_path)
-        if not self.ssh_gateway.stat(job.account, root_path):
-            fallback = str(PurePosixPath(self.job_service.config_service.load().repo_paths.get(job.account, "")) / "output" / job.experiment)
-            root_path = fallback
-        return OutputTreeResponse(job_id=job_id, root=self._build_tree(job.account, root_path))
+        for root_path in self._candidate_output_paths(job):
+            if self.ssh_gateway.stat(job.account, root_path):
+                return OutputTreeResponse(job_id=job_id, root=self._build_tree(job.account, root_path))
+        raise SSHError(f"Output path is not available for job {job_id}")
 
     def get_file_content(self, job_id: str, path: str) -> str:
         job = self.job_service.database.get_job(job_id)

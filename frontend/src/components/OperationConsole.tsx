@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useRef } from "react";
+
 import type { CommandLogEventPayload } from "../types";
 import { SectionCard } from "./SectionCard";
 
@@ -6,37 +8,148 @@ interface OperationLogEntry {
   timestamp: string;
 }
 
+function formatAction(action: string): string {
+  const mapping: Record<string, string> = {
+    "connection-test": "连接测试",
+    "job-submit": "任务提交",
+    "job-cancel": "取消任务",
+    "job-sync": "同步结果",
+    "jobs-refresh": "刷新任务",
+  };
+  return mapping[action] ?? action;
+}
+
+function formatStage(stage: CommandLogEventPayload["stage"]): string {
+  const mapping: Record<CommandLogEventPayload["stage"], string> = {
+    operation_start: "开始",
+    command_start: "命令",
+    stdout: "输出",
+    stderr: "错误",
+    command_end: "结束",
+    operation_end: "完成",
+    operation_error: "失败",
+  };
+  return mapping[stage];
+}
+
 export function OperationConsole({
   entries,
+  activeOperationCount,
+  pendingRequests,
   onClear,
 }: {
   entries: OperationLogEntry[];
+  activeOperationCount: number;
+  pendingRequests: Array<{ id: string; label: string; detail: string }>;
   onClear: () => void;
 }) {
-  return (
-    <SectionCard
-      title="操作控制台"
-      actions={
-        <button className="ghost-button" onClick={onClear}>
-          清空日志
-        </button>
+  const operations = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        operationId: string;
+        action: string;
+        username?: string;
+        entries: OperationLogEntry[];
       }
-    >
-      <div className="operation-console">
-        {entries.length === 0 ? (
-          <p className="muted-text">执行提交、刷新、同步或连接测试等操作后，这里会实时显示命令日志。</p>
-        ) : (
-          entries.map((entry, index) => (
-            <pre key={`${entry.timestamp}-${index}`} className={`operation-line operation-line--${entry.payload.stage}`}>
-              <span className="operation-meta">
-                [{new Date(entry.timestamp).toLocaleTimeString()}] {entry.payload.action}
-                {entry.payload.username ? `@${entry.payload.username}` : ""}
-              </span>{" "}
-              {entry.payload.message ?? ""}
-            </pre>
-          ))
-        )}
-      </div>
-    </SectionCard>
+    >();
+    entries.forEach((entry) => {
+      const current = grouped.get(entry.payload.operation_id);
+      if (current) {
+        current.entries.push(entry);
+        if (!current.username && entry.payload.username) {
+          current.username = entry.payload.username;
+        }
+        return;
+      }
+      grouped.set(entry.payload.operation_id, {
+        operationId: entry.payload.operation_id,
+        action: entry.payload.action,
+        username: entry.payload.username,
+        entries: [entry],
+      });
+    });
+    return Array.from(grouped.values()).reverse();
+  }, [entries]);
+
+  return (
+    <div className="operation-dock">
+      <SectionCard
+        title="后台操作反馈"
+        actions={
+          <div className="inline-controls">
+            <button className="ghost-button" onClick={onClear} disabled={operations.length === 0 && pendingRequests.length === 0}>
+              清空
+            </button>
+          </div>
+        }
+      >
+        <div className="operation-feedback-strip">
+          <span className="operation-feedback-badge">
+            进行中：{activeOperationCount}
+          </span>
+          <span className="operation-feedback-badge">
+            等待后端响应：{pendingRequests.length}
+          </span>
+        </div>
+        {pendingRequests.length > 0 ? (
+          <div className="pending-request-list">
+            {pendingRequests.map((request) => (
+              <article key={request.id} className="pending-request-card">
+                <strong>{request.label}</strong>
+                <p>{request.detail}</p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+        <div className="operation-console operation-console--compact">
+          {operations.length === 0 ? (
+            <p className="muted-text">点击任一操作按钮后，这里会先显示请求已发出，再持续显示后端步骤和实时输出。</p>
+          ) : (
+            operations.slice(0, 4).map((operation) => {
+              const lastEntry = operation.entries[operation.entries.length - 1];
+              const statusClass =
+                lastEntry.payload.stage === "operation_error"
+                  ? "operation-card--error"
+                  : lastEntry.payload.stage === "operation_end"
+                    ? "operation-card--success"
+                    : "operation-card--running";
+              return (
+                <article key={operation.operationId} className={`operation-card ${statusClass}`}>
+                  <header className="operation-card__header">
+                    <div className="operation-card__title">
+                      <strong>
+                        {formatAction(operation.action)}
+                        {operation.username ? ` @${operation.username}` : ""}
+                      </strong>
+                      <span className="muted-text">
+                        {new Date(operation.entries[0].timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <span className={`operation-pill operation-pill--${lastEntry.payload.stage}`}>
+                      {formatStage(lastEntry.payload.stage)}
+                    </span>
+                  </header>
+                  <div className="operation-card__timeline">
+                    {operation.entries.slice(-6).map((entry, index) => (
+                      <div key={`${entry.timestamp}-${index}`} className={`operation-event operation-event--${entry.payload.stage}`}>
+                        <div className="operation-event__meta">
+                          <span>
+                            [{new Date(entry.timestamp).toLocaleTimeString()}] {formatStage(entry.payload.stage)}
+                          </span>
+                          {entry.payload.username ? <span>@{entry.payload.username}</span> : null}
+                        </div>
+                        {entry.payload.command ? <pre className="operation-command break-text">{entry.payload.command}</pre> : null}
+                        {entry.payload.message ? <pre className="operation-line break-text">{entry.payload.message}</pre> : null}
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      </SectionCard>
+    </div>
   );
 }

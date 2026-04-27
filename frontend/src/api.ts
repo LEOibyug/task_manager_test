@@ -61,10 +61,15 @@ export async function refreshJobs(): Promise<JobsResponse> {
   return handleResponse<JobsResponse>(await fetch("/api/jobs/refresh", { method: "POST" }));
 }
 
+export async function clearJobs(): Promise<JobsResponse> {
+  return handleResponse<JobsResponse>(await fetch("/api/jobs/clear", { method: "POST" }));
+}
+
 export async function submitJob(payload: {
   experiment_name: string;
   script_path: string;
   account: string;
+  preferred_gpu_node: "gpu1" | "gpu2" | "gpu3" | null;
 }): Promise<{ message: string }> {
   return handleResponse<{ message: string }>(
     await fetch("/api/jobs/submit", {
@@ -91,6 +96,10 @@ export async function getJobLog(jobId: string, options: { offset?: number; tail?
 
 export async function getOutputTree(jobId: string): Promise<OutputTreeResponse> {
   return handleResponse<OutputTreeResponse>(await fetch(`/api/jobs/${jobId}/outputs/tree`));
+}
+
+export async function downloadOutputFile(jobId: string, path: string): Promise<void> {
+  window.open(`/api/jobs/${jobId}/outputs/file?path=${encodeURIComponent(path)}`, "_blank", "noopener,noreferrer");
 }
 
 export async function syncJob(jobId: string): Promise<{ message: string }> {

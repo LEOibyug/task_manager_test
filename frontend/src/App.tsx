@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 
-import { cancelJob, getConfig, listJobs, refreshJobs, syncJob } from "./api";
+import { cancelJob, clearJobs, getConfig, listJobs, refreshJobs, syncJob } from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
 import { JobsPage } from "./pages/JobsPage";
 import type { AppConfig, CommandLogEventPayload, JobRecord, StatusEvent } from "./types";
+import type { ExperimentSummary } from "./types";
 
 const emptyConfig: AppConfig = {
   server_ip: "",
@@ -17,6 +18,11 @@ const emptyConfig: AppConfig = {
 };
 
 type TabId = "config" | "experiments" | "jobs";
+type PendingRequest = {
+  id: string;
+  label: string;
+  detail: string;
+};
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
@@ -25,6 +31,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("config");
   const [banner, setBanner] = useState<string>("尚未建立实时状态连接。");
   const [commandLogs, setCommandLogs] = useState<Array<{ payload: CommandLogEventPayload; timestamp: string }>>([]);
+  const [activeOperationIds, setActiveOperationIds] = useState<string[]>([]);
+  const [experimentCache, setExperimentCache] = useState<ExperimentSummary[] | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [isRefreshingJobs, setIsRefreshingJobs] = useState(false);
+  const [isClearingJobs, setIsClearingJobs] = useState(false);
+  const [syncingJobIds, setSyncingJobIds] = useState<string[]>([]);
+  const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
 
   useEffect(() => {
     setSelectedJob((current) => {
@@ -55,16 +68,23 @@ export default function App() {
         setBanner(`已收到实时更新：当前跟踪 ${nextJobs.length} 个任务。`);
       }
       if (message.type === "command_log") {
+        const payload = message.payload as unknown as CommandLogEventPayload;
         setCommandLogs((current) => {
           const next = [
             ...current,
             {
-              payload: message.payload as unknown as CommandLogEventPayload,
+              payload,
               timestamp: message.timestamp,
             },
           ];
           return next.slice(-300);
         });
+        if (payload.stage === "operation_start") {
+          setActiveOperationIds((current) => Array.from(new Set([...current, payload.operation_id])));
+        }
+        if (payload.stage === "operation_end" || payload.stage === "operation_error") {
+          setActiveOperationIds((current) => current.filter((operationId) => operationId !== payload.operation_id));
+        }
       }
       if (message.type === "error") {
         setBanner(`后台刷新出错：${String(message.payload.message ?? "未知错误")}`);
@@ -80,21 +100,66 @@ export default function App() {
     { id: "jobs" as const, label: "任务" },
   ];
 
+  function beginPendingRequest(label: string, detail: string): string {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setPendingRequests((current) => [...current, { id, label, detail }]);
+    setBanner(`${label}已发起，等待后端返回实时反馈。`);
+    return id;
+  }
+
+  function finishPendingRequest(id: string): void {
+    setPendingRequests((current) => current.filter((item) => item.id !== id));
+  }
+
   async function handleRefreshJobs() {
-    const response = await refreshJobs();
-    setJobs(response.jobs);
+    const pendingId = beginPendingRequest("刷新任务", "已向后端发出刷新请求，等待远端任务扫描输出。");
+    setIsRefreshingJobs(true);
+    try {
+      const response = await refreshJobs();
+      setJobs(response.jobs);
+    } finally {
+      setIsRefreshingJobs(false);
+      finishPendingRequest(pendingId);
+    }
   }
 
   async function handleSync(job: JobRecord) {
-    await syncJob(job.job_id);
-    const response = await listJobs();
-    setJobs(response.jobs);
+    const pendingId = beginPendingRequest("同步结果", `任务 ${job.job_id} 正在发起从 ${job.account} 到主账户的同步。`);
+    setSyncingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      await syncJob(job.job_id);
+      const response = await listJobs();
+      setJobs(response.jobs);
+    } finally {
+      setSyncingJobIds((current) => current.filter((item) => item !== job.job_id));
+      finishPendingRequest(pendingId);
+    }
   }
 
   async function handleCancel(job: JobRecord) {
-    await cancelJob(job.job_id);
-    const response = await listJobs();
-    setJobs(response.jobs);
+    const pendingId = beginPendingRequest("取消任务", `任务 ${job.job_id} 正在请求取消，请等待 scancel 输出。`);
+    setCancellingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      await cancelJob(job.job_id);
+      const response = await listJobs();
+      setJobs(response.jobs);
+    } finally {
+      setCancellingJobIds((current) => current.filter((item) => item !== job.job_id));
+      finishPendingRequest(pendingId);
+    }
+  }
+
+  async function handleClearJobs() {
+    const pendingId = beginPendingRequest("清空任务", "正在清空本地任务记录列表。");
+    setIsClearingJobs(true);
+    try {
+      const response = await clearJobs();
+      setJobs(response.jobs);
+      setSelectedJob(null);
+    } finally {
+      setIsClearingJobs(false);
+      finishPendingRequest(pendingId);
+    }
   }
 
   return (
@@ -125,19 +190,44 @@ export default function App() {
         ))}
       </nav>
 
-      {activeTab === "config" ? <ConfigurationPage config={config} onConfigChange={setConfig} /> : null}
-      {activeTab === "experiments" ? <ExperimentsPage config={config} /> : null}
+      {activeTab === "config" ? (
+        <ConfigurationPage
+          config={config}
+          onConfigChange={setConfig}
+          onOperationStart={beginPendingRequest}
+          onOperationEnd={finishPendingRequest}
+        />
+      ) : null}
+      {activeTab === "experiments" ? (
+        <ExperimentsPage
+          config={config}
+          experiments={experimentCache}
+          onExperimentsChange={setExperimentCache}
+          onOperationStart={beginPendingRequest}
+          onOperationEnd={finishPendingRequest}
+        />
+      ) : null}
       {activeTab === "jobs" ? (
         <JobsPage
           jobs={jobs}
           selectedJob={selectedJob}
           onSelectJob={setSelectedJob}
           onRefresh={handleRefreshJobs}
+          onClear={handleClearJobs}
           onSync={handleSync}
           onCancel={handleCancel}
+          isRefreshing={isRefreshingJobs}
+          isClearing={isClearingJobs}
+          syncingJobIds={syncingJobIds}
+          cancellingJobIds={cancellingJobIds}
         />
       ) : null}
-      <OperationConsole entries={commandLogs} onClear={() => setCommandLogs([])} />
+      <OperationConsole
+        entries={commandLogs}
+        activeOperationCount={activeOperationIds.length}
+        pendingRequests={pendingRequests}
+        onClear={() => setCommandLogs([])}
+      />
     </div>
   );
 }

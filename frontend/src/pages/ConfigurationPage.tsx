@@ -7,6 +7,8 @@ import { SectionCard } from "../components/SectionCard";
 interface ConfigurationPageProps {
   config: AppConfig;
   onConfigChange: (config: AppConfig) => void;
+  onOperationStart: (label: string, detail: string) => string;
+  onOperationEnd: (id: string) => void;
 }
 
 function parseRepoPaths(value: string): Record<string, string> {
@@ -29,25 +31,41 @@ function formatRepoPaths(repoPaths: Record<string, string>): string {
     .join("\n");
 }
 
-export function ConfigurationPage({ config, onConfigChange }: ConfigurationPageProps) {
+export function ConfigurationPage({ config, onConfigChange, onOperationStart, onOperationEnd }: ConfigurationPageProps) {
   const [draft, setDraft] = useState<AppConfig>(config);
   const [checks, setChecks] = useState<ConnectionCheckResult[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     setDraft(config);
   }, [config]);
 
   async function persistConfig() {
-    const saved = await saveConfig(draft);
-    onConfigChange(saved);
-    setDraft(saved);
-    setMessage("配置已保存。");
+    const operationId = onOperationStart("保存配置", "配置保存请求已发送，等待后端写入配置文件。");
+    setIsSaving(true);
+    try {
+      const saved = await saveConfig(draft);
+      onConfigChange(saved);
+      setDraft(saved);
+      setMessage("配置已保存。");
+    } finally {
+      setIsSaving(false);
+      onOperationEnd(operationId);
+    }
   }
 
   async function runConnectionCheck() {
-    const response = await testConnection(draft);
-    setChecks(response.checks);
+    const operationId = onOperationStart("测试连接", "连接测试请求已发送，等待后端检查 SSH 与仓库路径。");
+    setIsTesting(true);
+    try {
+      const response = await testConnection(draft);
+      setChecks(response.checks);
+    } finally {
+      setIsTesting(false);
+      onOperationEnd(operationId);
+    }
   }
 
   function updateRepoPath(username: string, path: string) {
@@ -94,10 +112,12 @@ export function ConfigurationPage({ config, onConfigChange }: ConfigurationPageP
       title="连接与账户"
       actions={
         <div className="inline-controls">
-          <button className="ghost-button" onClick={runConnectionCheck}>
-            测试连接
+          <button className="ghost-button" onClick={() => void runConnectionCheck()} disabled={isTesting || isSaving}>
+            {isTesting ? "测试中..." : "测试连接"}
           </button>
-          <button onClick={persistConfig}>保存配置</button>
+          <button onClick={() => void persistConfig()} disabled={isSaving || isTesting}>
+            {isSaving ? "保存中..." : "保存配置"}
+          </button>
         </div>
       }
     >

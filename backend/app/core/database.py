@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -40,6 +40,7 @@ class Database:
                     resource_usage TEXT,
                     max_runtime_hours INTEGER NOT NULL,
                     log_path TEXT,
+                    log_path_template TEXT,
                     job_name TEXT,
                     output_path_hint TEXT,
                     synced INTEGER NOT NULL DEFAULT 0,
@@ -55,6 +56,48 @@ class Database:
                 )
                 """
             )
+            self._ensure_job_columns(connection)
+
+    def _ensure_job_columns(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        expected_columns = {
+            "log_path_template": "TEXT",
+        }
+        for column_name, column_type in expected_columns.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}"
+                )
+
+    def _row_value(self, row: sqlite3.Row, key: str) -> str | int | None:
+        return row[key] if key in row.keys() else None
+
+    def _job_from_row(self, row: sqlite3.Row) -> JobRecord:
+        start_time = self._row_value(row, "start_time")
+        nodes = self._row_value(row, "nodes")
+        synced = self._row_value(row, "synced")
+        max_runtime_hours = self._row_value(row, "max_runtime_hours")
+        return JobRecord(
+            job_id=str(row["job_id"]),
+            account=str(row["account"]),
+            experiment=str(row["experiment"]),
+            script_path=str(row["script_path"]),
+            status=str(row["status"]),
+            start_time=datetime.fromisoformat(start_time) if start_time else None,
+            runtime=self._row_value(row, "runtime"),
+            nodes=[item for item in (nodes or "").split(",") if item],
+            resource_usage=self._row_value(row, "resource_usage"),
+            max_runtime_hours=int(max_runtime_hours) if max_runtime_hours is not None else 48,
+            log_path=self._row_value(row, "log_path"),
+            log_path_template=self._row_value(row, "log_path_template"),
+            job_name=self._row_value(row, "job_name"),
+            output_path_hint=self._row_value(row, "output_path_hint"),
+            synced=bool(synced) if synced is not None else False,
+            last_error=self._row_value(row, "last_error"),
+        )
 
     def upsert_job(self, job: JobRecord) -> None:
         with self.connect() as connection:
@@ -62,8 +105,8 @@ class Database:
                 """
                 INSERT INTO jobs (
                     job_id, account, experiment, script_path, status, start_time, runtime, nodes,
-                    resource_usage, max_runtime_hours, log_path, job_name, output_path_hint, synced, last_error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resource_usage, max_runtime_hours, log_path, log_path_template, job_name, output_path_hint, synced, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     account=excluded.account,
                     experiment=excluded.experiment,
@@ -75,6 +118,7 @@ class Database:
                     resource_usage=excluded.resource_usage,
                     max_runtime_hours=excluded.max_runtime_hours,
                     log_path=excluded.log_path,
+                    log_path_template=excluded.log_path_template,
                     job_name=excluded.job_name,
                     output_path_hint=excluded.output_path_hint,
                     synced=excluded.synced,
@@ -92,6 +136,7 @@ class Database:
                     job.resource_usage,
                     job.max_runtime_hours,
                     job.log_path,
+                    job.log_path_template,
                     job.job_name,
                     job.output_path_hint,
                     int(job.synced),
@@ -102,54 +147,17 @@ class Database:
     def list_jobs(self) -> list[JobRecord]:
         with self.connect() as connection:
             rows = connection.execute("SELECT * FROM jobs ORDER BY COALESCE(start_time, '') DESC, job_id DESC").fetchall()
-        jobs: list[JobRecord] = []
-        for row in rows:
-            jobs.append(
-                JobRecord(
-                    job_id=row["job_id"],
-                    account=row["account"],
-                    experiment=row["experiment"],
-                    script_path=row["script_path"],
-                    status=row["status"],
-                    start_time=datetime.fromisoformat(row["start_time"]) if row["start_time"] else None,
-                    runtime=row["runtime"],
-                    nodes=[item for item in (row["nodes"] or "").split(",") if item],
-                    resource_usage=row["resource_usage"],
-                    max_runtime_hours=row["max_runtime_hours"],
-                    log_path=row["log_path"],
-                    job_name=row["job_name"],
-                    output_path_hint=row["output_path_hint"],
-                    synced=bool(row["synced"]),
-                    last_error=row["last_error"],
-                )
-            )
-        return jobs
+        return [self._job_from_row(row) for row in rows]
 
     def get_job(self, job_id: str) -> JobRecord | None:
         with self.connect() as connection:
             row = connection.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         if row is None:
             return None
-        return JobRecord(
-            job_id=row["job_id"],
-            account=row["account"],
-            experiment=row["experiment"],
-            script_path=row["script_path"],
-            status=row["status"],
-            start_time=datetime.fromisoformat(row["start_time"]) if row["start_time"] else None,
-            runtime=row["runtime"],
-            nodes=[item for item in (row["nodes"] or "").split(",") if item],
-            resource_usage=row["resource_usage"],
-            max_runtime_hours=row["max_runtime_hours"],
-            log_path=row["log_path"],
-            job_name=row["job_name"],
-            output_path_hint=row["output_path_hint"],
-            synced=bool(row["synced"]),
-            last_error=row["last_error"],
-        )
+        return self._job_from_row(row)
 
     def mark_synced(self, job_id: str) -> None:
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         with self.connect() as connection:
             connection.execute("UPDATE jobs SET synced = 1 WHERE job_id = ?", (job_id,))
             connection.execute(
@@ -160,3 +168,18 @@ class Database:
                 (job_id, timestamp),
             )
 
+    def clear_jobs(self) -> None:
+        with self.connect() as connection:
+            removable_job_ids = [
+                row["job_id"]
+                for row in connection.execute(
+                    "SELECT job_id FROM jobs WHERE status NOT IN ('RUNNING', 'PENDING')"
+                ).fetchall()
+            ]
+            connection.execute("DELETE FROM jobs WHERE status NOT IN ('RUNNING', 'PENDING')")
+            if removable_job_ids:
+                placeholders = ",".join("?" for _ in removable_job_ids)
+                connection.execute(
+                    f"DELETE FROM sync_records WHERE job_id IN ({placeholders})",
+                    removable_job_ids,
+                )

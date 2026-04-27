@@ -5,19 +5,19 @@ import unittest
 from pathlib import Path
 
 from app.core.database import Database
+from app.core.settings import RuntimeSettings
 from app.schemas import AppConfig, JobRecord
 from app.services.config_service import ConfigService
 from app.services.job_service import JobService
-from app.services.output_service import OutputService
-from app.services.ssh_service import InMemorySSHGateway
+from app.services.log_service import LogService
+from app.services.ssh_service import InMemorySSHGateway, SSHError
 
 
-class OutputServiceTestCase(unittest.TestCase):
-    def test_falls_back_to_output_experiment_directory(self) -> None:
+class LogServiceTestCase(unittest.TestCase):
+    def test_read_log_normalizes_percent_j_template_from_existing_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
-            database = Database(Path(temp_dir) / "app.db")
-            database.initialize()
+            db_path = Path(temp_dir) / "app.db"
             config_service = ConfigService(config_path)
             config_service.save(
                 AppConfig(
@@ -26,33 +26,33 @@ class OutputServiceTestCase(unittest.TestCase):
                     repo_paths={"main": "/srv/main/repo", "worker1": "/srv/worker1/repo"},
                 )
             )
+            database = Database(db_path)
+            database.initialize()
             database.upsert_job(
                 JobRecord(
-                    job_id="1",
+                    job_id="25389",
                     account="worker1",
                     experiment="exp001",
                     script_path="/srv/worker1/repo/experiments/exp001/run.sbatch",
-                    output_path_hint="output/exp001/model_config/tagA",
+                    log_path="/srv/worker1/repo/output/sbatch/exp001.%j.out",
+                    log_path_template="output/sbatch/exp001.%j.out",
                 )
             )
             gateway = InMemorySSHGateway(
-                files={
-                    "worker1": {
-                        "/srv/worker1/repo/output/exp001/metrics.json": "{}",
-                    }
-                }
+                files={"worker1": {"/srv/worker1/repo/output/sbatch/exp001.25389.out": "hello\nworld\n"}}
             )
             job_service = JobService(config_service, gateway, database)
-            service = OutputService(gateway, job_service)
-            tree = service.get_tree("1")
-            self.assertEqual(tree.root.path, "/srv/worker1/repo/output/exp001")
-            self.assertEqual(tree.root.children[0].name, "metrics.json")
+            service = LogService(gateway, job_service, RuntimeSettings())
 
-    def test_ignores_output_sbatch_log_directory_and_uses_output_directory(self) -> None:
+            result = service.read_log("25389", tail=True)
+
+            self.assertEqual(result.log_path, "/srv/worker1/repo/output/sbatch/exp001.25389.out")
+            self.assertIn("hello", result.content)
+
+    def test_missing_remote_log_raises_ssh_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"
-            database = Database(Path(temp_dir) / "app.db")
-            database.initialize()
+            db_path = Path(temp_dir) / "app.db"
             config_service = ConfigService(config_path)
             config_service.save(
                 AppConfig(
@@ -61,30 +61,23 @@ class OutputServiceTestCase(unittest.TestCase):
                     repo_paths={"main": "/srv/main/repo", "worker1": "/srv/worker1/repo"},
                 )
             )
+            database = Database(db_path)
+            database.initialize()
             database.upsert_job(
                 JobRecord(
-                    job_id="67890",
+                    job_id="25389",
                     account="worker1",
                     experiment="exp001",
                     script_path="/srv/worker1/repo/experiments/exp001/run.sbatch",
-                    output_path_hint="output/exp001",
-                    log_path="/srv/worker1/repo/output/sbatch/slurm-67890.out",
-                    log_path_template="output/sbatch/slurm-%j.out",
+                    log_path="/srv/worker1/repo/logs/missing.out",
                 )
             )
-            gateway = InMemorySSHGateway(
-                files={
-                    "worker1": {
-                        "/srv/worker1/repo/output/sbatch/slurm-67890.out": "log",
-                        "/srv/worker1/repo/output/exp001/metrics.json": "{}",
-                    }
-                }
-            )
+            gateway = InMemorySSHGateway(files={"worker1": {}})
             job_service = JobService(config_service, gateway, database)
-            service = OutputService(gateway, job_service)
-            tree = service.get_tree("67890")
-            self.assertEqual(tree.root.path, "/srv/worker1/repo/output/exp001")
-            self.assertEqual(tree.root.children[0].name, "metrics.json")
+            service = LogService(gateway, job_service, RuntimeSettings())
+
+            with self.assertRaises(SSHError):
+                service.read_log("25389", tail=True)
 
 
 if __name__ == "__main__":

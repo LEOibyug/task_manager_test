@@ -157,8 +157,11 @@ class ParamikoSSHGateway:
     def read_bytes(self, username: str, path: str) -> bytes:
         client = self._get_client(username)
         with client.open_sftp() as sftp:
-            with sftp.file(path, "r") as remote_file:
-                return remote_file.read()
+            try:
+                with sftp.file(path, "r") as remote_file:
+                    return remote_file.read()
+            except FileNotFoundError as exc:
+                raise SSHError(f"Remote file not found: {username}:{path}") from exc
 
     def stat(self, username: str, path: str) -> bool:
         client = self._get_client(username)

@@ -16,6 +16,9 @@ class LogService:
         job = self.job_service.database.get_job(job_id)
         if job is None or not job.log_path:
             raise SSHError(f"Log path not available for job {job_id}")
+        job = self.job_service.normalize_job_record(job)
+        if not job.log_path:
+            raise SSHError(f"Log path not available for job {job_id}")
         content = self.ssh_gateway.read_file(job.account, job.log_path)
         if search:
             filtered = [line for line in content.splitlines() if search.lower() in line.lower()]
@@ -36,4 +39,3 @@ class LogService:
             size=size,
             truncated=(start + len(chunk)) < size,
         )
-

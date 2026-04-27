@@ -62,6 +62,7 @@ async def test_connection(
 ) -> ConnectionCheckResponse:
     loop = asyncio.get_running_loop()
     _, logger = build_command_logger(container, loop, "connection-test")
+    logger({"stage": "operation_start", "message": "正在测试各账户 SSH 连接与仓库路径"})
     gateway = ParamikoSSHGateway(host=request.config.server_ip or "127.0.0.1", port=request.config.server_port)
     checks: list[ConnectionCheckResult] = []
     try:
@@ -70,18 +71,26 @@ async def test_connection(
                 continue
             repo_path = request.config.repo_paths.get(username)
             if not repo_path:
+                logger({"stage": "stderr", "username": username, "message": "缺少仓库路径配置"})
                 checks.append(
                     ConnectionCheckResult(
                         username=username,
                         reachable=False,
                         message="缺少仓库路径配置",
                     )
-            )
+                )
                 continue
             try:
                 result = await run_in_threadpool(gateway.run, username, "pwd", None, logger, False)
                 reachable = result.exit_code == 0
                 repo_exists = gateway.stat(username, repo_path)
+                logger(
+                    {
+                        "stage": "stdout" if reachable and repo_exists else "stderr",
+                        "username": username,
+                        "message": "连接正常" if reachable and repo_exists else result.stderr.strip() or "仓库路径不存在",
+                    }
+                )
                 checks.append(
                     ConnectionCheckResult(
                         username=username,
@@ -99,9 +108,14 @@ async def test_connection(
                         message=str(exc),
                     )
                 )
+                logger({"stage": "stderr", "username": username, "message": str(exc)})
+        logger({"stage": "operation_end", "message": f"连接测试完成，共检查 {len(checks)} 个账户"})
+        return ConnectionCheckResponse(checks=checks)
+    except Exception as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise
     finally:
         gateway.close()
-    return ConnectionCheckResponse(checks=checks)
 
 
 @router.get("/experiments")
@@ -127,13 +141,16 @@ def list_jobs(container: AppContainer = Depends(get_container)) -> RefreshJobsRe
 async def refresh_jobs(container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
     loop = asyncio.get_running_loop()
     _, logger = build_command_logger(container, loop, "jobs-refresh")
+    logger({"stage": "operation_start", "message": "正在刷新远端任务状态"})
     try:
         result = await run_in_threadpool(container.job_service.refresh_jobs, logger)
+        logger({"stage": "operation_end", "message": f"任务刷新完成，当前共 {len(result.jobs)} 条记录"})
         await container.broadcaster.broadcast(
             container.scheduler.build_jobs_refreshed_event(result.jobs)
         )
         return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
     except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -157,21 +174,37 @@ async def cancel_job(job_id: str, container: AppContainer = Depends(get_containe
     operation_id, logger = build_command_logger(container, loop, "job-cancel")
     logger({"stage": "operation_start", "message": f"正在取消任务 {job_id}"})
     try:
-        job = await run_in_threadpool(container.job_service.cancel_job, job_id, logger)
-        logger({"stage": "operation_end", "message": f"任务 {job_id} 已取消"})
+        await run_in_threadpool(container.job_service.cancel_job, job_id, logger)
+        result = await run_in_threadpool(container.job_service.refresh_jobs, logger)
+        job = next((item for item in result.jobs if item.job_id == job_id), None)
+        logger({"stage": "operation_end", "message": f"任务 {job_id} 已提交取消，并已按 Slurm 状态刷新"})
         asyncio.create_task(
             container.broadcaster.broadcast(
-                container.scheduler.build_jobs_refreshed_event(container.database.list_jobs())
+                container.scheduler.build_jobs_refreshed_event(result.jobs)
             )
         )
         return CancelJobResponse(
-            job_id=job.job_id,
-            account=job.account,
-            message=f"任务 {job.job_id} 已取消（操作 {operation_id}）",
+            job_id=job.job_id if job else job_id,
+            account=job.account if job else "",
+            message=f"任务 {job_id} 已提交取消并完成状态刷新（操作 {operation_id}）",
         )
     except SSHError as exc:
         logger({"stage": "operation_error", "message": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/jobs/clear", response_model=RefreshJobsResponse)
+async def clear_jobs(container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
+    loop = asyncio.get_running_loop()
+    _, logger = build_command_logger(container, loop, "jobs-clear")
+    logger({"stage": "operation_start", "message": "正在清空本地非运行任务记录"})
+    await run_in_threadpool(container.job_service.clear_jobs)
+    result = container.job_service.list_jobs()
+    logger({"stage": "operation_end", "message": "本地非运行任务记录已清空"})
+    await container.broadcaster.broadcast(
+        container.scheduler.build_jobs_refreshed_event(result.jobs)
+    )
+    return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
 
 
 @router.get("/jobs/{job_id}/log", response_model=LogResponse)

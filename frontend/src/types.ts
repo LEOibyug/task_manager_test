@@ -1,4 +1,4 @@
-export type JobState = "RUNNING" | "PENDING" | "COMPLETED" | "FAILED" | "UNKNOWN";
+export type JobState = "RUNNING" | "PENDING" | "COMPLETED" | "FAILED" | "CANCELLED" | "UNKNOWN";
 
 export interface AppConfig {
   server_ip: string;
@@ -85,6 +85,12 @@ export interface OutputNode {
 export interface OutputTreeResponse {
   job_id: string;
   root: OutputNode;
+}
+
+export interface OutputFileItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
 }
 
 export interface StatusEvent {

@@ -9,19 +9,41 @@ interface JobsPageProps {
   selectedJob: JobRecord | null;
   onSelectJob: (job: JobRecord) => void;
   onRefresh: () => void;
+  onClear: () => void;
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
+  isRefreshing: boolean;
+  isClearing: boolean;
+  syncingJobIds: string[];
+  cancellingJobIds: string[];
 }
 
-export function JobsPage({ jobs, selectedJob, onSelectJob, onRefresh, onSync, onCancel }: JobsPageProps) {
+export function JobsPage({
+  jobs,
+  selectedJob,
+  onSelectJob,
+  onRefresh,
+  onClear,
+  onSync,
+  onCancel,
+  isRefreshing,
+  isClearing,
+  syncingJobIds,
+  cancellingJobIds,
+}: JobsPageProps) {
   return (
     <div className="jobs-shell">
       <SectionCard
         title="全局任务面板"
         actions={
-          <button className="ghost-button" onClick={onRefresh}>
-            立即刷新
-          </button>
+          <div className="inline-controls">
+            <button className="ghost-button" onClick={() => void onRefresh()} disabled={isRefreshing || isClearing}>
+              {isRefreshing ? "刷新中..." : "立即刷新"}
+            </button>
+            <button className="ghost-button danger-button" onClick={() => void onClear()} disabled={isClearing || isRefreshing}>
+              {isClearing ? "清空中..." : "一键清空"}
+            </button>
+          </div>
         }
       >
         <JobTable
@@ -30,6 +52,8 @@ export function JobsPage({ jobs, selectedJob, onSelectJob, onRefresh, onSync, on
           onSelect={onSelectJob}
           onSync={onSync}
           onCancel={onCancel}
+          syncingJobIds={syncingJobIds}
+          cancellingJobIds={cancellingJobIds}
         />
       </SectionCard>
       <div className="jobs-detail-grid">
