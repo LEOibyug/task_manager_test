@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Protocol
+import time
+from typing import Any, Callable, Protocol
 
 try:
     import paramiko
@@ -18,8 +19,18 @@ class CommandResult:
     exit_code: int
 
 
+CommandLogger = Callable[[dict[str, Any]], None]
+
+
 class SSHGatewayProtocol(Protocol):
-    def run(self, username: str, command: str, cwd: str | None = None) -> CommandResult:
+    def run(
+        self,
+        username: str,
+        command: str,
+        cwd: str | None = None,
+        logger: CommandLogger | None = None,
+        get_pty: bool = False,
+    ) -> CommandResult:
         ...
 
     def read_file(self, username: str, path: str) -> str:
@@ -60,15 +71,83 @@ class ParamikoSSHGateway:
         self._clients[username] = client
         return client
 
-    def run(self, username: str, command: str, cwd: str | None = None) -> CommandResult:
+    def run(
+        self,
+        username: str,
+        command: str,
+        cwd: str | None = None,
+        logger: CommandLogger | None = None,
+        get_pty: bool = False,
+    ) -> CommandResult:
         client = self._get_client(username)
         remote_command = command if cwd is None else f"cd {cwd} && {command}"
-        stdin, stdout, stderr = client.exec_command(remote_command)
-        exit_code = stdout.channel.recv_exit_status()
+        if logger is not None:
+            logger(
+                {
+                    "stage": "command_start",
+                    "username": username,
+                    "command": remote_command,
+                    "message": f"$ {remote_command}",
+                }
+            )
+        stdin, stdout, stderr = client.exec_command(remote_command, get_pty=get_pty)
+        channel = stdout.channel
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        while True:
+            made_progress = False
+            if channel.recv_ready():
+                data = channel.recv(4096)
+                if data:
+                    text = data.decode("utf-8", errors="replace")
+                    stdout_chunks.append(text)
+                    if logger is not None:
+                        logger(
+                            {
+                                "stage": "stdout",
+                                "username": username,
+                                "command": remote_command,
+                                "message": text,
+                            }
+                        )
+                made_progress = True
+            if not get_pty and channel.recv_stderr_ready():
+                data = channel.recv_stderr(4096)
+                if data:
+                    text = data.decode("utf-8", errors="replace")
+                    stderr_chunks.append(text)
+                    if logger is not None:
+                        logger(
+                            {
+                                "stage": "stderr",
+                                "username": username,
+                                "command": remote_command,
+                                "message": text,
+                            }
+                        )
+                made_progress = True
+            if channel.exit_status_ready():
+                if not channel.recv_ready() and (get_pty or not channel.recv_stderr_ready()):
+                    break
+            if not made_progress:
+                time.sleep(0.05)
+        exit_code = channel.recv_exit_status()
+        stdout_text = "".join(stdout_chunks)
+        stderr_text = "" if get_pty else "".join(stderr_chunks)
+        if logger is not None:
+            logger(
+                {
+                    "stage": "command_end",
+                    "username": username,
+                    "command": remote_command,
+                    "message": f"Command finished with exit code {exit_code}",
+                    "exit_code": exit_code,
+                }
+            )
         return CommandResult(
             command=remote_command,
-            stdout=stdout.read().decode("utf-8", errors="replace"),
-            stderr=stderr.read().decode("utf-8", errors="replace"),
+            stdout=stdout_text,
+            stderr=stderr_text,
             exit_code=exit_code,
         )
 
@@ -115,11 +194,79 @@ class InMemorySSHGateway:
         self.commands = commands or {}
 
     def run(self, username: str, command: str, cwd: str | None = None) -> CommandResult:
+        return self._run(username, command, cwd=cwd)
+
+    def _run(
+        self,
+        username: str,
+        command: str,
+        cwd: str | None = None,
+        logger: CommandLogger | None = None,
+        get_pty: bool = False,
+    ) -> CommandResult:
         key = (username, f"{cwd or ''}::{command}")
         result = self.commands.get(key)
+        remote_command = command if cwd is None else f"cd {cwd} && {command}"
+        if logger is not None:
+            logger(
+                {
+                    "stage": "command_start",
+                    "username": username,
+                    "command": remote_command,
+                    "message": f"$ {remote_command}",
+                }
+            )
         if result is not None:
+            if logger is not None and result.stdout:
+                logger(
+                    {
+                        "stage": "stdout",
+                        "username": username,
+                        "command": remote_command,
+                        "message": result.stdout,
+                    }
+                )
+            if logger is not None and result.stderr:
+                logger(
+                    {
+                        "stage": "stderr",
+                        "username": username,
+                        "command": remote_command,
+                        "message": result.stderr,
+                    }
+                )
+            if logger is not None:
+                logger(
+                    {
+                        "stage": "command_end",
+                        "username": username,
+                        "command": remote_command,
+                        "message": f"Command finished with exit code {result.exit_code}",
+                        "exit_code": result.exit_code,
+                    }
+                )
             return result
+        if logger is not None:
+            logger(
+                {
+                    "stage": "command_end",
+                    "username": username,
+                    "command": remote_command,
+                    "message": "Command finished with exit code 0",
+                    "exit_code": 0,
+                }
+            )
         return CommandResult(command=command, stdout="", stderr="", exit_code=0)
+
+    def run(
+        self,
+        username: str,
+        command: str,
+        cwd: str | None = None,
+        logger: CommandLogger | None = None,
+        get_pty: bool = False,
+    ) -> CommandResult:
+        return self._run(username, command, cwd=cwd, logger=logger, get_pty=get_pty)
 
     def read_file(self, username: str, path: str) -> str:
         return self.read_bytes(username, path).decode("utf-8", errors="replace")

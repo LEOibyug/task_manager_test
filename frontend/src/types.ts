@@ -49,6 +49,12 @@ export interface JobsResponse {
   refreshed_at: string;
 }
 
+export interface CancelJobResponse {
+  job_id: string;
+  account: string;
+  message: string;
+}
+
 export interface ConnectionCheckResult {
   username: string;
   reachable: boolean;
@@ -82,8 +88,17 @@ export interface OutputTreeResponse {
 }
 
 export interface StatusEvent {
-  type: "jobs_refreshed" | "sync_complete" | "error" | "heartbeat";
+  type: "jobs_refreshed" | "sync_complete" | "error" | "heartbeat" | "command_log";
   payload: Record<string, unknown>;
   timestamp: string;
 }
 
+export interface CommandLogEventPayload {
+  operation_id: string;
+  action: string;
+  stage: "operation_start" | "command_start" | "stdout" | "stderr" | "command_end" | "operation_end" | "operation_error";
+  username?: string;
+  command?: string;
+  message?: string;
+  exit_code?: number;
+}

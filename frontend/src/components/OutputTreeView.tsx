@@ -37,16 +37,15 @@ export function OutputTreeView({ job }: { job: JobRecord | null }) {
   }, [job]);
 
   return (
-    <SectionCard title="Output Browser">
+    <SectionCard title="产出浏览器">
       {error ? <p className="error-text">{error}</p> : null}
       {tree ? (
         <ul className="tree-list">
           <NodeItem node={tree.root} />
         </ul>
       ) : (
-        <p className="muted-text">Select a completed or running job to inspect output folders.</p>
+        <p className="muted-text">请选择一个运行中或已完成的任务以查看产出目录。</p>
       )}
     </SectionCard>
   );
 }
-

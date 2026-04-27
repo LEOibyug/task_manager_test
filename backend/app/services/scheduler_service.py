@@ -32,6 +32,9 @@ class StatusBroadcaster:
         for socket in dead_connections:
             self.disconnect(socket)
 
+    def build_command_event(self, payload: dict[str, object]) -> StatusEvent:
+        return StatusEvent(type="command_log", payload=payload)
+
 
 class SchedulerService:
     def __init__(self, config_service: ConfigService, job_service: JobService, broadcaster: StatusBroadcaster) -> None:

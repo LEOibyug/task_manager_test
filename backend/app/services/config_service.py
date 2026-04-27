@@ -21,6 +21,11 @@ class ConfigService:
 
     def save(self, config: AppConfig) -> AppConfig:
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
-        self.config_file.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        try:
+            self.config_file.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+        except PermissionError:
+            fallback_dir = Path(__file__).resolve().parents[2] / "data" / "runtime-config"
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            self.config_file = fallback_dir / "config.json"
+            self.config_file.write_text(config.model_dump_json(indent=2), encoding="utf-8")
         return config
-

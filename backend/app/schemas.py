@@ -84,6 +84,12 @@ class SubmitJobResponse(BaseModel):
     message: str
 
 
+class CancelJobResponse(BaseModel):
+    job_id: str
+    account: str
+    message: str
+
+
 class RefreshJobsResponse(BaseModel):
     jobs: list[JobRecord]
     refreshed_at: datetime
@@ -116,10 +122,9 @@ class SyncResponse(BaseModel):
 
 
 class StatusEvent(BaseModel):
-    type: Literal["jobs_refreshed", "sync_complete", "error", "heartbeat"]
+    type: Literal["jobs_refreshed", "sync_complete", "error", "heartbeat", "command_log"]
     payload: dict[str, Any]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 OutputNode.model_rebuild()
-

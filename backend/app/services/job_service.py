@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 from app.core.database import Database
 from app.schemas import AppConfig, JobListResponse, JobRecord, SubmitJobRequest
 from app.services.config_service import ConfigService
-from app.services.ssh_service import CommandResult, SSHError, SSHGatewayProtocol
+from app.services.ssh_service import CommandLogger, CommandResult, SSHError, SSHGatewayProtocol
 
 
 SBATCH_OUTPUT_PATTERN = re.compile(r"^#SBATCH\s+-o\s+(?P<path>.+)$", re.MULTILINE)
@@ -62,26 +62,34 @@ class JobService:
             raise SSHError(message)
         return result
 
-    def _count_active_jobs(self, username: str) -> int:
-        result = self.ssh_gateway.run(username, 'squeue -u "{username}" -h -o "%T"'.format(username=username))
+    def _count_active_jobs(self, username: str, logger: CommandLogger | None = None) -> int:
+        result = self.ssh_gateway.run(
+            username,
+            'squeue -u "{username}" -h -o "%T"'.format(username=username),
+            logger=logger,
+        )
         self._ensure_ok(result, "squeue")
         states = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         return sum(1 for state in states if state in {"RUNNING", "PENDING"})
 
-    def submit_job(self, request: SubmitJobRequest) -> JobRecord:
+    def submit_job(self, request: SubmitJobRequest, logger: CommandLogger | None = None) -> JobRecord:
         config = self.config_service.load()
         repo_path = self._repo_path(config, request.account)
         target_script_path = self._map_script_path(config, request.experiment_name, request.script_path, request.account)
-        active_jobs = self._count_active_jobs(request.account)
+        active_jobs = self._count_active_jobs(request.account, logger=logger)
         if active_jobs >= 2:
             raise SSHError(f"Account {request.account} already has {active_jobs} active jobs.")
 
-        branch_result = self._ensure_ok(
-            self.ssh_gateway.run(request.account, "git rev-parse --abbrev-ref HEAD", cwd=repo_path),
-            "git rev-parse",
-        )
-        branch = branch_result.stdout.strip() or "main"
-        self._ensure_ok(self.ssh_gateway.run(request.account, f"git pull origin {branch}", cwd=repo_path), "git pull")
+        if request.account != config.main_username:
+            branch_result = self._ensure_ok(
+                self.ssh_gateway.run(request.account, "git rev-parse --abbrev-ref HEAD", cwd=repo_path, logger=logger),
+                "git rev-parse",
+            )
+            branch = branch_result.stdout.strip() or "main"
+            self._ensure_ok(
+                self.ssh_gateway.run(request.account, f"git pull origin {branch}", cwd=repo_path, logger=logger),
+                "git pull",
+            )
 
         script_content = self.ssh_gateway.read_file(request.account, target_script_path)
         raw_log_path, job_name, output_hint = self.parse_sbatch_metadata(script_content, target_script_path, request.experiment_name)
@@ -89,7 +97,12 @@ class JobService:
 
         relative_script = str(PurePosixPath(target_script_path).relative_to(repo_path))
         submit_result = self._ensure_ok(
-            self.ssh_gateway.run(request.account, f"sbatch {relative_script} -w gpu1,gpu2,gpu3", cwd=repo_path),
+            self.ssh_gateway.run(
+                request.account,
+                f"sbatch {relative_script} -w gpu1,gpu2,gpu3",
+                cwd=repo_path,
+                logger=logger,
+            ),
             "sbatch",
         )
         match = SBATCH_JOB_PATTERN.search(submit_result.stdout)
@@ -114,7 +127,20 @@ class JobService:
     def list_jobs(self) -> JobListResponse:
         return JobListResponse(jobs=self.database.list_jobs(), refreshed_at=datetime.now(UTC))
 
-    def refresh_jobs(self) -> JobListResponse:
+    def cancel_job(self, job_id: str, logger: CommandLogger | None = None) -> JobRecord:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        self._ensure_ok(
+            self.ssh_gateway.run(job.account, f"scancel {job_id}", logger=logger),
+            "scancel",
+        )
+        job.status = "FAILED"
+        job.last_error = "任务已取消"
+        self.database.upsert_job(job)
+        return job
+
+    def refresh_jobs(self, logger: CommandLogger | None = None) -> JobListResponse:
         config = self.config_service.load()
         existing_jobs = {job.job_id: job for job in self.database.list_jobs()}
         for username in config.sub_usernames:
@@ -124,6 +150,7 @@ class JobService:
             live_result = self.ssh_gateway.run(
                 username,
                 'squeue -u "{username}" -h -o "%i|%T|%M|%S|%R"'.format(username=username),
+                logger=logger,
             )
             if live_result.exit_code == 0:
                 for line in live_result.stdout.splitlines():
@@ -152,6 +179,7 @@ class JobService:
             history_result = self.ssh_gateway.run(
                 username,
                 'sacct -u "{username}" --format=JobID,State,Elapsed -n -P'.format(username=username),
+                logger=logger,
             )
             if history_result.exit_code == 0:
                 for line in history_result.stdout.splitlines():
@@ -168,7 +196,7 @@ class JobService:
                     elif state.startswith("FAILED") or state.startswith("CANCELLED") or state.startswith("TIMEOUT"):
                         cached.status = "FAILED"
                     cached.runtime = elapsed or cached.runtime
-                    seff_result = self.ssh_gateway.run(username, f"seff {job_id}")
+                    seff_result = self.ssh_gateway.run(username, f"seff {job_id}", logger=logger)
                     if seff_result.exit_code == 0:
                         cached.resource_usage = self._parse_seff_summary(seff_result.stdout)
                     self.database.upsert_job(cached)

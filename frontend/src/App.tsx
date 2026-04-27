@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 
-import { getConfig, listJobs, refreshJobs, syncJob } from "./api";
+import { cancelJob, getConfig, listJobs, refreshJobs, syncJob } from "./api";
+import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
 import { JobsPage } from "./pages/JobsPage";
-import type { AppConfig, JobRecord, StatusEvent } from "./types";
+import type { AppConfig, CommandLogEventPayload, JobRecord, StatusEvent } from "./types";
 
 const emptyConfig: AppConfig = {
   server_ip: "",
@@ -22,7 +23,8 @@ export default function App() {
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("config");
-  const [banner, setBanner] = useState<string>("No active status stream yet.");
+  const [banner, setBanner] = useState<string>("尚未建立实时状态连接。");
+  const [commandLogs, setCommandLogs] = useState<Array<{ payload: CommandLogEventPayload; timestamp: string }>>([]);
 
   useEffect(() => {
     setSelectedJob((current) => {
@@ -42,7 +44,7 @@ export default function App() {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(`${protocol}://${window.location.host}/api/ws/status`);
     socket.addEventListener("open", () => {
-      setBanner("Live status stream connected.");
+      setBanner("实时状态流已连接。");
       socket.send("subscribe");
     });
     socket.addEventListener("message", (event) => {
@@ -50,20 +52,32 @@ export default function App() {
       if (message.type === "jobs_refreshed") {
         const nextJobs = (message.payload.jobs as JobRecord[]) ?? [];
         setJobs(nextJobs);
-        setBanner(`Live update received: ${nextJobs.length} tracked jobs.`);
+        setBanner(`已收到实时更新：当前跟踪 ${nextJobs.length} 个任务。`);
+      }
+      if (message.type === "command_log") {
+        setCommandLogs((current) => {
+          const next = [
+            ...current,
+            {
+              payload: message.payload as unknown as CommandLogEventPayload,
+              timestamp: message.timestamp,
+            },
+          ];
+          return next.slice(-300);
+        });
       }
       if (message.type === "error") {
-        setBanner(`Background refresh error: ${String(message.payload.message ?? "unknown error")}`);
+        setBanner(`后台刷新出错：${String(message.payload.message ?? "未知错误")}`);
       }
     });
-    socket.addEventListener("close", () => setBanner("Status stream disconnected."));
+    socket.addEventListener("close", () => setBanner("实时状态流已断开。"));
     return () => socket.close();
   }, []);
 
   const tabs = [
-    { id: "config" as const, label: "Config" },
-    { id: "experiments" as const, label: "Experiments" },
-    { id: "jobs" as const, label: "Jobs" },
+    { id: "config" as const, label: "配置" },
+    { id: "experiments" as const, label: "实验" },
+    { id: "jobs" as const, label: "任务" },
   ];
 
   async function handleRefreshJobs() {
@@ -77,14 +91,20 @@ export default function App() {
     setJobs(response.jobs);
   }
 
+  async function handleCancel(job: JobRecord) {
+    await cancelJob(job.job_id);
+    const response = await listJobs();
+    setJobs(response.jobs);
+  }
+
   return (
     <div className="app-shell">
       <div className="hero">
         <div>
-          <p className="eyebrow">Remote Experiment Orchestration</p>
+          <p className="eyebrow">远程实验编排</p>
           <h1>Exp-Queue-Manager</h1>
           <p className="hero-copy">
-            Manage Slurm experiment queues, sync code across accounts, inspect logs, and pull training outputs back to the main account.
+            统一管理 Slurm 实验队列、账户间代码同步、日志查看，以及从分账户回收训练产出到主账户。
           </p>
         </div>
         <div className="hero-status">
@@ -114,8 +134,10 @@ export default function App() {
           onSelectJob={setSelectedJob}
           onRefresh={handleRefreshJobs}
           onSync={handleSync}
+          onCancel={handleCancel}
         />
       ) : null}
+      <OperationConsole entries={commandLogs} onClear={() => setCommandLogs([])} />
     </div>
   );
 }

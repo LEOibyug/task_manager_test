@@ -88,7 +88,49 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(job.output_path_hint, "output/exp001/model_config/runA")
         self.assertIsNotNone(self.database.get_job("12345"))
 
+    def test_submit_job_to_main_account_skips_git_pull(self) -> None:
+        self.config_service.save(
+            AppConfig(
+                server_ip="10.0.0.1",
+                main_username="main",
+                sub_usernames=["worker1"],
+                repo_paths={
+                    "main": "/srv/main/repo",
+                    "worker1": "/srv/worker1/repo",
+                },
+            )
+        )
+        files = {
+            "main": {
+                "/srv/main/repo/experiments/exp001/train.sbatch": "#SBATCH -o logs/train.out\n#SBATCH -J runMain\n",
+            }
+        }
+        commands = {
+            ("main", "::squeue -u \"main\" -h -o \"%T\""): CommandResult(
+                command="squeue",
+                stdout="PENDING\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("main", "/srv/main/repo::sbatch experiments/exp001/train.sbatch -w gpu1,gpu2,gpu3"): CommandResult(
+                command="sbatch",
+                stdout="Submitted batch job 54321\n",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(files=files, commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        job = service.submit_job(
+            SubmitJobRequest(
+                experiment_name="exp001",
+                script_path="/srv/main/repo/experiments/exp001/train.sbatch",
+                account="main",
+            )
+        )
+        self.assertEqual(job.job_id, "54321")
+        self.assertEqual(job.account, "main")
+
 
 if __name__ == "__main__":
     unittest.main()
-

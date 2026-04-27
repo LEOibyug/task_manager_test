@@ -1,5 +1,6 @@
 import type {
   AppConfig,
+  CancelJobResponse,
   ConnectionCheckResponse,
   ExperimentDetail,
   ExperimentSummary,
@@ -96,3 +97,6 @@ export async function syncJob(jobId: string): Promise<{ message: string }> {
   return handleResponse<{ message: string }>(await fetch(`/api/jobs/${jobId}/sync`, { method: "POST" }));
 }
 
+export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
+  return handleResponse<CancelJobResponse>(await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }));
+}

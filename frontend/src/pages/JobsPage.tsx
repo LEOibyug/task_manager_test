@@ -10,20 +10,27 @@ interface JobsPageProps {
   onSelectJob: (job: JobRecord) => void;
   onRefresh: () => void;
   onSync: (job: JobRecord) => void;
+  onCancel: (job: JobRecord) => void;
 }
 
-export function JobsPage({ jobs, selectedJob, onSelectJob, onRefresh, onSync }: JobsPageProps) {
+export function JobsPage({ jobs, selectedJob, onSelectJob, onRefresh, onSync, onCancel }: JobsPageProps) {
   return (
     <div className="jobs-shell">
       <SectionCard
-        title="Global Job Board"
+        title="全局任务面板"
         actions={
           <button className="ghost-button" onClick={onRefresh}>
-            Refresh now
+            立即刷新
           </button>
         }
       >
-        <JobTable jobs={jobs} selectedJobId={selectedJob?.job_id ?? null} onSelect={onSelectJob} onSync={onSync} />
+        <JobTable
+          jobs={jobs}
+          selectedJobId={selectedJob?.job_id ?? null}
+          onSelect={onSelectJob}
+          onSync={onSync}
+          onCancel={onCancel}
+        />
       </SectionCard>
       <div className="jobs-detail-grid">
         <LogViewer job={selectedJob} />
@@ -32,4 +39,3 @@ export function JobsPage({ jobs, selectedJob, onSelectJob, onRefresh, onSync }: 
     </div>
   );
 }
-

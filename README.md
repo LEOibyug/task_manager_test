@@ -10,6 +10,14 @@ Exp-Queue-Manager is a local web application for managing machine learning or HP
 
 ## Local Development
 
+### One-click run
+
+```bash
+./run_local.sh
+```
+
+The script creates `.venv/` if needed, installs backend and frontend dependencies when missing, builds the frontend bundle if `frontend/dist/` does not exist, and then starts the app at `http://127.0.0.1:8000`.
+
 ### 1. Create and activate the virtual environment
 
 ```bash

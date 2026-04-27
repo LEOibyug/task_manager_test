@@ -200,10 +200,26 @@ select {
   margin-top: 1rem;
 }
 
-.split-layout {
+.repo-paths-panel__title {
+  margin: 0 0 0.75rem;
+  font-weight: 700;
+}
+
+.repo-paths-grid {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.repo-path-row {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.experiments-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 1.25rem;
+  align-items: start;
 }
 
 .list-panel,
@@ -216,12 +232,37 @@ select {
   padding: 1rem;
 }
 
+.experiments-sidebar {
+  position: sticky;
+  top: 1rem;
+  max-height: 72vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.experiments-sidebar__toolbar {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.experiments-list-scroll {
+  overflow: auto;
+  padding-right: 0.35rem;
+}
+
+.experiments-detail {
+  min-height: 72vh;
+}
+
 .list-item {
   width: 100%;
   margin-bottom: 0.75rem;
   text-align: left;
   background: rgba(255, 255, 255, 0.04);
   color: #f8f5ec;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .list-item.active {
@@ -236,10 +277,32 @@ select {
   margin-top: 1rem;
 }
 
+.file-card {
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.file-card h3,
+.file-card p {
+  margin: 0;
+}
+
+.file-card__actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .mono,
 .log-viewer,
 .tree-node {
   font-family: "IBM Plex Mono", monospace;
+}
+
+.break-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .table-shell {
@@ -254,8 +317,12 @@ select {
 .job-table th,
 .job-table td {
   text-align: left;
+  vertical-align: top;
   padding: 0.85rem 0.7rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .job-table tr {
@@ -264,6 +331,11 @@ select {
 
 .job-table tr.is-selected {
   background: rgba(93, 162, 255, 0.12);
+}
+
+.table-actions {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .status-badge {
@@ -297,6 +369,11 @@ select {
   color: #ffaeae;
 }
 
+.danger-button {
+  border: 1px solid rgba(255, 112, 112, 0.24);
+  color: #ffb0b0;
+}
+
 .jobs-shell,
 .jobs-detail-grid {
   display: grid;
@@ -316,6 +393,38 @@ select {
   background: rgba(4, 8, 16, 0.7);
   color: #a8efb2;
   white-space: pre-wrap;
+}
+
+.operation-console {
+  min-height: 220px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 1rem;
+  border-radius: 24px;
+  background: rgba(4, 8, 16, 0.76);
+}
+
+.operation-line {
+  margin: 0 0 0.6rem;
+  white-space: pre-wrap;
+  color: #f8f5ec;
+}
+
+.operation-meta {
+  color: #8fbdf7;
+}
+
+.operation-line--stderr {
+  color: #ffb0b0;
+}
+
+.operation-line--operation_error {
+  color: #ff8f8f;
+}
+
+.operation-line--operation_end,
+.operation-line--command_end {
+  color: #96f79b;
 }
 
 .tree-list {
@@ -356,7 +465,7 @@ select {
 
 @media (max-width: 960px) {
   .hero,
-  .split-layout,
+  .experiments-layout,
   .jobs-detail-grid,
   .form-grid {
     grid-template-columns: 1fr;
@@ -364,5 +473,12 @@ select {
 
   .hero-status {
     justify-content: flex-start;
+  }
+
+  .experiments-sidebar,
+  .experiments-detail {
+    max-height: none;
+    min-height: auto;
+    position: static;
   }
 }

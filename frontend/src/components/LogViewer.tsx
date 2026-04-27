@@ -38,26 +38,25 @@ export function LogViewer({ job }: { job: JobRecord | null }) {
 
   return (
     <SectionCard
-      title="Sbatch Log"
+      title="Sbatch 日志"
       actions={
         <div className="inline-controls">
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search keyword"
+            placeholder="搜索关键字"
           />
           <button className="ghost-button" onClick={() => refreshLog(false)} disabled={!job}>
-            Search
+            搜索
           </button>
           <button className="ghost-button" onClick={() => refreshLog(true)} disabled={!job}>
-            Jump to tail
+            跳到末尾
           </button>
         </div>
       }
     >
       {error ? <p className="error-text">{error}</p> : null}
-      <pre className="log-viewer">{log?.content ?? "Select a job to inspect its sbatch log."}</pre>
+      <pre className="log-viewer">{log?.content ?? "请选择一个任务以查看对应的 sbatch 日志。"}</pre>
     </SectionCard>
   );
 }
-

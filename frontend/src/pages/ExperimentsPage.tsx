@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { getExperimentDetail, listExperiments, submitJob } from "../api";
 import { SectionCard } from "../components/SectionCard";
@@ -12,16 +12,18 @@ export function ExperimentsPage({ config }: ExperimentsPageProps) {
   const [experiments, setExperiments] = useState<ExperimentSummary[]>([]);
   const [selected, setSelected] = useState<ExperimentSummary | null>(null);
   const [detail, setDetail] = useState<ExperimentDetail | null>(null);
-  const [account, setAccount] = useState(config.sub_usernames[0] ?? "");
+  const [search, setSearch] = useState("");
+  const [selectedAccounts, setSelectedAccounts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
+
+  const availableAccounts = useMemo(() => {
+    const accounts = [config.main_username, ...config.sub_usernames].filter(Boolean);
+    return Array.from(new Set(accounts));
+  }, [config.main_username, config.sub_usernames]);
 
   useEffect(() => {
     listExperiments().then(setExperiments).catch(() => setExperiments([]));
   }, []);
-
-  useEffect(() => {
-    setAccount(config.sub_usernames[0] ?? "");
-  }, [config.sub_usernames]);
 
   async function loadDetail(experiment: ExperimentSummary) {
     setSelected(experiment);
@@ -30,42 +32,55 @@ export function ExperimentsPage({ config }: ExperimentsPageProps) {
   }
 
   async function publishScript(file: ExperimentFile) {
-    if (!selected || !account) {
+    if (!selected) {
+      return;
+    }
+    const targetAccount = selectedAccounts[file.path] ?? availableAccounts[0] ?? "";
+    if (!targetAccount) {
+      setMessage("请先选择目标账户。");
       return;
     }
     const response = await submitJob({
       experiment_name: selected.name,
       script_path: file.path,
-      account,
+      account: targetAccount,
     });
     setMessage(response.message);
   }
 
+  const filteredExperiments = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) {
+      return experiments;
+    }
+    return experiments.filter((experiment) => experiment.name.toLowerCase().includes(keyword));
+  }, [experiments, search]);
+
   return (
-    <SectionCard title="Experiments">
-      <div className="split-layout">
-        <div className="list-panel">
-          {experiments.map((experiment) => (
-            <button
-              key={experiment.name}
-              className={`list-item ${selected?.name === experiment.name ? "active" : ""}`}
-              onClick={() => loadDetail(experiment)}
-            >
-              {experiment.name}
-            </button>
-          ))}
-        </div>
-        <div className="detail-panel">
-          <div className="inline-controls">
-            <select value={account} onChange={(event) => setAccount(event.target.value)}>
-              {config.sub_usernames.map((username) => (
-                <option key={username} value={username}>
-                  {username}
-                </option>
-              ))}
-            </select>
-            <span className="muted-text">Submit target account</span>
+    <SectionCard title="实验列表">
+      <div className="experiments-layout">
+        <aside className="list-panel experiments-sidebar">
+          <div className="experiments-sidebar__toolbar">
+            <input
+              value={search}
+              placeholder="搜索实验名称"
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <p className="muted-text">仅展示主账户 `experiments/` 目录下的实验。</p>
           </div>
+          <div className="experiments-list-scroll">
+            {filteredExperiments.map((experiment) => (
+              <button
+                key={experiment.name}
+                className={`list-item ${selected?.name === experiment.name ? "active" : ""}`}
+                onClick={() => loadDetail(experiment)}
+              >
+                {experiment.name}
+              </button>
+            ))}
+          </div>
+        </aside>
+        <section className="detail-panel experiments-detail">
           {message ? <p className="success-text">{message}</p> : null}
           {detail ? (
             <div className="file-grid">
@@ -73,19 +88,37 @@ export function ExperimentsPage({ config }: ExperimentsPageProps) {
                 <article key={file.path} className="file-card">
                   <h3>{file.name}</h3>
                   <p>{file.kind}</p>
-                  <p className="mono">{file.path}</p>
+                  <p className="mono break-text">{file.path}</p>
                   {file.kind === "sbatch" ? (
-                    <button onClick={() => publishScript(file)}>Publish to {account || "account"}</button>
+                    <div className="file-card__actions">
+                      <select
+                        value={selectedAccounts[file.path] ?? availableAccounts[0] ?? ""}
+                        onChange={(event) =>
+                          setSelectedAccounts((current) => ({
+                            ...current,
+                            [file.path]: event.target.value,
+                          }))
+                        }
+                      >
+                        {availableAccounts.map((username) => (
+                          <option key={username} value={username}>
+                            {username}
+                          </option>
+                        ))}
+                      </select>
+                      <button onClick={() => publishScript(file)}>
+                        发布到 {(selectedAccounts[file.path] ?? availableAccounts[0] ?? "目标账户")}
+                      </button>
+                    </div>
                   ) : null}
                 </article>
               ))}
             </div>
           ) : (
-            <p className="muted-text">Select an experiment to inspect scripts and files.</p>
+            <p className="muted-text">请选择一个实验以查看脚本和文件。</p>
           )}
-        </div>
+        </section>
       </div>
     </SectionCard>
   );
 }
-
