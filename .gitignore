@@ -17,6 +17,9 @@ backend/*.db
 backend/*.sqlite3
 backend/data/*.db
 backend/data/*.sqlite3
+backend/data/runtime-config/
+backend/*.egg-info/
+backend/exp_queue_manager_backend.egg-info/
 frontend/dist/
 frontend/node_modules/
 *.log

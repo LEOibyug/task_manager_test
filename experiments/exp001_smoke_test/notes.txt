@@ -1,0 +1,3 @@
+This experiment fixture is used for end-to-end testing of experiment discovery,
+sbatch submission, log reading, output browsing, and sync back to the main account.
+
