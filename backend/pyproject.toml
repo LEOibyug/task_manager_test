@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exp-queue-manager-backend"
+version = "0.1.0"
+description = "FastAPI backend for experiment queue management"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn[standard]>=0.32.0,<1.0.0",
+  "paramiko>=3.5.0,<4.0.0",
+  "pydantic>=2.9.0,<3.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

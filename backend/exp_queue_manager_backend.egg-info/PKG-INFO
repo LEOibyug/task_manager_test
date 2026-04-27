@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: exp-queue-manager-backend
+Version: 0.1.0
+Summary: FastAPI backend for experiment queue management
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0.0,>=0.115.0
+Requires-Dist: uvicorn[standard]<1.0.0,>=0.32.0
+Requires-Dist: paramiko<4.0.0,>=3.5.0
+Requires-Dist: pydantic<3.0.0,>=2.9.0
+
+# Backend
+
+FastAPI backend package for Exp-Queue-Manager.
+
