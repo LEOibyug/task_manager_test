@@ -2,6 +2,7 @@ import type {
   AppConfig,
   CancelJobResponse,
   ConnectionCheckResponse,
+  EvalLogResponse,
   ExperimentDetail,
   ExperimentSummary,
   JobsResponse,
@@ -80,7 +81,10 @@ export async function submitJob(payload: {
   );
 }
 
-export async function getJobLog(jobId: string, options: { offset?: number; tail?: boolean; search?: string } = {}): Promise<LogResponse> {
+export async function getJobLog(
+  jobId: string,
+  options: { offset?: number; tail?: boolean; search?: string; signal?: AbortSignal; view?: "preview" | "full" } = {},
+): Promise<LogResponse> {
   const params = new URLSearchParams();
   if (options.offset !== undefined) {
     params.set("offset", String(options.offset));
@@ -91,11 +95,40 @@ export async function getJobLog(jobId: string, options: { offset?: number; tail?
   if (options.search) {
     params.set("search", options.search);
   }
-  return handleResponse<LogResponse>(await fetch(`/api/jobs/${jobId}/log?${params.toString()}`));
+  if (options.view) {
+    params.set("view", options.view);
+  }
+  return handleResponse<LogResponse>(
+    await fetch(`/api/jobs/${jobId}/log?${params.toString()}`, {
+      signal: options.signal,
+    }),
+  );
 }
 
-export async function getOutputTree(jobId: string): Promise<OutputTreeResponse> {
-  return handleResponse<OutputTreeResponse>(await fetch(`/api/jobs/${jobId}/outputs/tree`));
+export async function getOutputTree(jobId: string, signal?: AbortSignal): Promise<OutputTreeResponse> {
+  return handleResponse<OutputTreeResponse>(
+    await fetch(`/api/jobs/${jobId}/outputs/tree`, {
+      signal,
+    }),
+  );
+}
+
+export async function getJobEvalLines(
+  jobId: string,
+  options: { pattern?: string; limit?: number; signal?: AbortSignal } = {},
+): Promise<EvalLogResponse> {
+  const params = new URLSearchParams();
+  if (options.pattern) {
+    params.set("pattern", options.pattern);
+  }
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  return handleResponse<EvalLogResponse>(
+    await fetch(`/api/jobs/${jobId}/log/evals?${params.toString()}`, {
+      signal: options.signal,
+    }),
+  );
 }
 
 export async function downloadOutputFile(jobId: string, path: string): Promise<void> {
@@ -108,4 +141,8 @@ export async function syncJob(jobId: string): Promise<{ message: string }> {
 
 export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
   return handleResponse<CancelJobResponse>(await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }));
+}
+
+export async function retryJob(jobId: string): Promise<{ job: { job_id: string }; message: string }> {
+  return handleResponse<{ job: { job_id: string }; message: string }>(await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" }));
 }

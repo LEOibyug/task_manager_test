@@ -56,6 +56,7 @@ class JobRecord(BaseModel):
     account: str
     experiment: str
     script_path: str
+    preferred_gpu_node: GpuNode | None = None
     status: JobState = "UNKNOWN"
     start_time: datetime | None = None
     runtime: str | None = None
@@ -68,6 +69,8 @@ class JobRecord(BaseModel):
     output_path_hint: str | None = None
     synced: bool = False
     last_error: str | None = None
+    resumed_from_job_id: str | None = None
+    continuation_root_job_id: str | None = None
 
 
 class JobListResponse(BaseModel):
@@ -105,6 +108,19 @@ class LogResponse(BaseModel):
     next_offset: int
     size: int
     truncated: bool
+    view: Literal["preview", "full"] = "full"
+
+
+class EvalLogEntry(BaseModel):
+    line_number: int | None = None
+    content: str
+
+
+class EvalLogResponse(BaseModel):
+    job_id: str
+    log_path: str
+    pattern: str
+    entries: list[EvalLogEntry] = Field(default_factory=list)
 
 
 class OutputNode(BaseModel):
@@ -125,7 +141,7 @@ class SyncResponse(BaseModel):
 
 
 class StatusEvent(BaseModel):
-    type: Literal["jobs_refreshed", "sync_complete", "error", "heartbeat", "command_log"]
+    type: Literal["jobs_refreshed", "sync_complete", "error", "heartbeat", "command_log", "job_log_cache_update"]
     payload: dict[str, Any]
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

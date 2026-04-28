@@ -31,6 +31,7 @@ export interface JobRecord {
   account: string;
   experiment: string;
   script_path: string;
+  preferred_gpu_node: "gpu1" | "gpu2" | "gpu3" | null;
   status: JobState;
   start_time: string | null;
   runtime: string | null;
@@ -42,6 +43,8 @@ export interface JobRecord {
   output_path_hint: string | null;
   synced: boolean;
   last_error: string | null;
+  resumed_from_job_id: string | null;
+  continuation_root_job_id: string | null;
 }
 
 export interface JobsResponse {
@@ -73,6 +76,27 @@ export interface LogResponse {
   next_offset: number;
   size: number;
   truncated: boolean;
+  view: "preview" | "full";
+}
+
+export interface EvalLogEntry {
+  line_number: number | null;
+  content: string;
+}
+
+export interface EvalLogResponse {
+  job_id: string;
+  log_path: string;
+  pattern: string;
+  entries: EvalLogEntry[];
+}
+
+export interface JobLogCacheEntry {
+  job_id: string;
+  log: LogResponse | null;
+  eval_log: EvalLogResponse | null;
+  log_updated_at: number;
+  eval_updated_at: number;
 }
 
 export interface OutputNode {
@@ -94,7 +118,7 @@ export interface OutputFileItem {
 }
 
 export interface StatusEvent {
-  type: "jobs_refreshed" | "sync_complete" | "error" | "heartbeat" | "command_log";
+  type: "jobs_refreshed" | "sync_complete" | "error" | "heartbeat" | "command_log" | "job_log_cache_update";
   payload: Record<string, unknown>;
   timestamp: string;
 }

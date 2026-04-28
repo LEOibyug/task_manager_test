@@ -87,6 +87,7 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(job.status, "PENDING")
         self.assertEqual(job.output_path_hint, "output/exp001/model_config/runA")
         self.assertEqual(job.log_path_template, "logs/train.out")
+        self.assertEqual(job.preferred_gpu_node, "gpu1")
         self.assertIsNotNone(self.database.get_job("12345"))
 
     def test_submit_job_to_main_account_skips_git_pull(self) -> None:
@@ -279,15 +280,9 @@ class JobServiceTestCase(unittest.TestCase):
                 stderr="",
                 exit_code=0,
             ),
-            ("main", "::sacct -u \"main\" --format=JobID,State,Elapsed -n -P"): CommandResult(
+            ("main", "::sacct -j \"50001\" --format=JobID,State,Elapsed -n -P"): CommandResult(
                 command="sacct",
                 stdout="50001|RUNNING|00:03\n",
-                stderr="",
-                exit_code=0,
-            ),
-            ("main", "::seff 50001"): CommandResult(
-                command="seff",
-                stdout="CPU Efficiency: 10%\n",
                 stderr="",
                 exit_code=0,
             ),
@@ -343,6 +338,61 @@ class JobServiceTestCase(unittest.TestCase):
         jobs = service.list_jobs().jobs
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].job_id, "40002")
+
+    def test_retry_timeout_job_creates_continuation_job(self) -> None:
+        files = {
+            "worker1": {
+                "/srv/worker1/repo/experiments/exp001/train.sbatch": "#SBATCH -o logs/train.out\n#SBATCH -J runA\n",
+            }
+        }
+        commands = {
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%T\""): CommandResult(
+                command="squeue",
+                stdout="RUNNING\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::git rev-parse --abbrev-ref HEAD"): CommandResult(
+                command="git rev-parse",
+                stdout="main\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::git pull origin main"): CommandResult(
+                command="git pull",
+                stdout="Already up to date.\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::sbatch experiments/exp001/train.sbatch -w gpu1"): CommandResult(
+                command="sbatch",
+                stdout="Submitted batch job 60002\n",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(files=files, commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="60001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                preferred_gpu_node="gpu1",
+                status="FAILED",
+                last_error="TIMEOUT",
+            )
+        )
+
+        new_job = service.retry_job("60001")
+
+        self.assertEqual(new_job.job_id, "60002")
+        self.assertEqual(new_job.resumed_from_job_id, "60001")
+        self.assertEqual(new_job.continuation_root_job_id, "60001")
+        self.assertEqual(new_job.preferred_gpu_node, "gpu1")
+        original_job = self.database.get_job("60001")
+        self.assertEqual(original_job.continuation_root_job_id, "60001")
 
 
 if __name__ == "__main__":

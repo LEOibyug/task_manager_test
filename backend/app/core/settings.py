@@ -17,6 +17,7 @@ class RuntimeSettings(BaseModel):
     database_path: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2] / "data" / "app.db")
     frontend_dist: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[3] / "frontend" / "dist")
     max_log_chunk_bytes: int = 65536
+    preview_log_chunk_bytes: int = 16384
 
 
 @lru_cache

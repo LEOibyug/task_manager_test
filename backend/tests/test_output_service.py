@@ -13,6 +13,42 @@ from app.services.ssh_service import InMemorySSHGateway
 
 
 class OutputServiceTestCase(unittest.TestCase):
+    def test_falls_back_to_existing_parent_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            database = Database(Path(temp_dir) / "app.db")
+            database.initialize()
+            config_service = ConfigService(config_path)
+            config_service.save(
+                AppConfig(
+                    main_username="main",
+                    sub_usernames=["worker1"],
+                    repo_paths={"main": "/srv/main/repo", "worker1": "/srv/worker1/repo"},
+                )
+            )
+            database.upsert_job(
+                JobRecord(
+                    job_id="25400",
+                    account="worker1",
+                    experiment="exp060",
+                    script_path="/srv/worker1/repo/experiments/exp060/run.sbatch",
+                    output_path_hint="output/exp060/model_config/exp060_uncertainty_fused_geometryaware_nohybrid_1gpu",
+                )
+            )
+            gateway = InMemorySSHGateway(
+                files={
+                    "worker1": {
+                        "/srv/worker1/repo/output/exp060/placeholder.txt": "",
+                    }
+                }
+            )
+            job_service = JobService(config_service, gateway, database)
+            service = OutputService(gateway, job_service)
+
+            tree = service.get_tree("25400")
+
+            self.assertEqual(tree.root.path, "/srv/worker1/repo/output/exp060")
+
     def test_falls_back_to_output_experiment_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.json"

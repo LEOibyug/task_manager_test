@@ -1,7 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+resolve_script_path() {
+  local src="${BASH_SOURCE[0]}"
+
+  if [[ "$src" != */* ]]; then
+    src="$(command -v -- "$src")"
+  fi
+
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+
+  cd -P "$(dirname "$src")" && pwd
+}
+
+ROOT_DIR="$(resolve_script_path)"
 VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
 VENV_UVICORN="$ROOT_DIR/.venv/bin/uvicorn"
 FRONTEND_DIR="$ROOT_DIR/frontend"
@@ -50,4 +67,3 @@ printf 'Open http://%s:%s in your browser.\n' "$HOST" "$PORT"
 
 cd "$ROOT_DIR"
 exec "$VENV_UVICORN" app.main:app --host "$HOST" --port "$PORT" --app-dir "$BACKEND_DIR"
-

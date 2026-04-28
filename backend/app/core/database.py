@@ -33,6 +33,7 @@ class Database:
                     account TEXT NOT NULL,
                     experiment TEXT NOT NULL,
                     script_path TEXT NOT NULL,
+                    preferred_gpu_node TEXT,
                     status TEXT NOT NULL,
                     start_time TEXT,
                     runtime TEXT,
@@ -44,7 +45,9 @@ class Database:
                     job_name TEXT,
                     output_path_hint TEXT,
                     synced INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT
+                    last_error TEXT,
+                    resumed_from_job_id TEXT,
+                    continuation_root_job_id TEXT
                 )
                 """
             )
@@ -65,6 +68,9 @@ class Database:
         }
         expected_columns = {
             "log_path_template": "TEXT",
+            "preferred_gpu_node": "TEXT",
+            "resumed_from_job_id": "TEXT",
+            "continuation_root_job_id": "TEXT",
         }
         for column_name, column_type in expected_columns.items():
             if column_name not in existing_columns:
@@ -85,6 +91,7 @@ class Database:
             account=str(row["account"]),
             experiment=str(row["experiment"]),
             script_path=str(row["script_path"]),
+            preferred_gpu_node=self._row_value(row, "preferred_gpu_node"),
             status=str(row["status"]),
             start_time=datetime.fromisoformat(start_time) if start_time else None,
             runtime=self._row_value(row, "runtime"),
@@ -97,6 +104,8 @@ class Database:
             output_path_hint=self._row_value(row, "output_path_hint"),
             synced=bool(synced) if synced is not None else False,
             last_error=self._row_value(row, "last_error"),
+            resumed_from_job_id=self._row_value(row, "resumed_from_job_id"),
+            continuation_root_job_id=self._row_value(row, "continuation_root_job_id"),
         )
 
     def upsert_job(self, job: JobRecord) -> None:
@@ -104,13 +113,15 @@ class Database:
             connection.execute(
                 """
                 INSERT INTO jobs (
-                    job_id, account, experiment, script_path, status, start_time, runtime, nodes,
-                    resource_usage, max_runtime_hours, log_path, log_path_template, job_name, output_path_hint, synced, last_error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    job_id, account, experiment, script_path, preferred_gpu_node, status, start_time, runtime, nodes,
+                    resource_usage, max_runtime_hours, log_path, log_path_template, job_name, output_path_hint, synced, last_error,
+                    resumed_from_job_id, continuation_root_job_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     account=excluded.account,
                     experiment=excluded.experiment,
                     script_path=excluded.script_path,
+                    preferred_gpu_node=excluded.preferred_gpu_node,
                     status=excluded.status,
                     start_time=excluded.start_time,
                     runtime=excluded.runtime,
@@ -122,13 +133,16 @@ class Database:
                     job_name=excluded.job_name,
                     output_path_hint=excluded.output_path_hint,
                     synced=excluded.synced,
-                    last_error=excluded.last_error
+                    last_error=excluded.last_error,
+                    resumed_from_job_id=excluded.resumed_from_job_id,
+                    continuation_root_job_id=excluded.continuation_root_job_id
                 """,
                 (
                     job.job_id,
                     job.account,
                     job.experiment,
                     job.script_path,
+                    job.preferred_gpu_node,
                     job.status,
                     job.start_time.isoformat() if job.start_time else None,
                     job.runtime,
@@ -141,6 +155,8 @@ class Database:
                     job.output_path_hint,
                     int(job.synced),
                     job.last_error,
+                    job.resumed_from_job_id,
+                    job.continuation_root_job_id,
                 ),
             )
 

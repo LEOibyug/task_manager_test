@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useState } from "react";
 
 import type { CommandLogEventPayload } from "../types";
 import { SectionCard } from "./SectionCard";
@@ -12,6 +12,7 @@ function formatAction(action: string): string {
   const mapping: Record<string, string> = {
     "connection-test": "连接测试",
     "job-submit": "任务提交",
+    "job-retry": "续训任务",
     "job-cancel": "取消任务",
     "job-sync": "同步结果",
     "jobs-refresh": "刷新任务",
@@ -43,6 +44,7 @@ export function OperationConsole({
   pendingRequests: Array<{ id: string; label: string; detail: string }>;
   onClear: () => void;
 }) {
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const operations = useMemo(() => {
     const grouped = new Map<
       string,
@@ -72,12 +74,33 @@ export function OperationConsole({
     return Array.from(grouped.values()).reverse();
   }, [entries]);
 
+  const pendingCount = pendingRequests.length;
+  const totalBadgeCount = activeOperationCount + pendingCount;
+
+  if (isCollapsed) {
+    return (
+      <div className="operation-dock operation-dock--collapsed">
+        <button className="operation-dock__toggle" onClick={() => setIsCollapsed(false)}>
+          <span className="operation-dock__toggle-title">后台反馈</span>
+          <span className="operation-dock__toggle-meta">
+            <span>进行中 {activeOperationCount}</span>
+            <span>待响应 {pendingCount}</span>
+          </span>
+          {totalBadgeCount > 0 ? <span className="operation-dock__count">{totalBadgeCount}</span> : null}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="operation-dock">
       <SectionCard
         title="后台操作反馈"
         actions={
           <div className="inline-controls">
+            <button className="ghost-button" onClick={() => setIsCollapsed(true)}>
+              收起
+            </button>
             <button className="ghost-button" onClick={onClear} disabled={operations.length === 0 && pendingRequests.length === 0}>
               清空
             </button>

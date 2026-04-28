@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import PurePosixPath
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -16,6 +17,7 @@ from app.schemas import (
     ConnectionCheckRequest,
     ConnectionCheckResponse,
     ConnectionCheckResult,
+    EvalLogResponse,
     LogResponse,
     OutputTreeResponse,
     RefreshJobsResponse,
@@ -43,6 +45,37 @@ def build_command_logger(container: AppContainer, loop: asyncio.AbstractEventLoo
     return operation_id, logger
 
 
+def check_connection_for_account(
+    gateway: ParamikoSSHGateway,
+    username: str,
+    repo_path: str | None,
+    logger,
+) -> ConnectionCheckResult:
+    if not repo_path:
+        logger({"stage": "stderr", "username": username, "message": "缺少仓库路径配置"})
+        return ConnectionCheckResult(
+            username=username,
+            reachable=False,
+            message="缺少仓库路径配置",
+        )
+    result = gateway.run(username, "pwd", None, logger, False)
+    reachable = result.exit_code == 0
+    repo_exists = gateway.stat(username, repo_path)
+    logger(
+        {
+            "stage": "stdout" if reachable and repo_exists else "stderr",
+            "username": username,
+            "message": "连接正常" if reachable and repo_exists else result.stderr.strip() or "仓库路径不存在",
+        }
+    )
+    return ConnectionCheckResult(
+        username=username,
+        reachable=reachable and repo_exists,
+        repo_path=repo_path,
+        message="连接正常" if reachable and repo_exists else result.stderr.strip() or "仓库路径不存在",
+    )
+
+
 @router.get("/config", response_model=AppConfig)
 def get_config(container: AppContainer = Depends(get_container)) -> AppConfig:
     return container.config_service.load()
@@ -66,49 +99,32 @@ async def test_connection(
     gateway = ParamikoSSHGateway(host=request.config.server_ip or "127.0.0.1", port=request.config.server_port)
     checks: list[ConnectionCheckResult] = []
     try:
-        for username in [request.config.main_username, *request.config.sub_usernames]:
-            if not username:
-                continue
-            repo_path = request.config.repo_paths.get(username)
-            if not repo_path:
-                logger({"stage": "stderr", "username": username, "message": "缺少仓库路径配置"})
-                checks.append(
-                    ConnectionCheckResult(
-                        username=username,
-                        reachable=False,
-                        message="缺少仓库路径配置",
-                    )
-                )
-                continue
-            try:
-                result = await run_in_threadpool(gateway.run, username, "pwd", None, logger, False)
-                reachable = result.exit_code == 0
-                repo_exists = gateway.stat(username, repo_path)
-                logger(
-                    {
-                        "stage": "stdout" if reachable and repo_exists else "stderr",
-                        "username": username,
-                        "message": "连接正常" if reachable and repo_exists else result.stderr.strip() or "仓库路径不存在",
-                    }
-                )
-                checks.append(
-                    ConnectionCheckResult(
-                        username=username,
-                        reachable=reachable and repo_exists,
-                        repo_path=repo_path,
-                        message="连接正常" if reachable and repo_exists else result.stderr.strip() or "仓库路径不存在",
-                    )
-                )
-            except Exception as exc:
+        usernames = [username for username in [request.config.main_username, *request.config.sub_usernames] if username]
+        tasks = [
+            run_in_threadpool(
+                check_connection_for_account,
+                gateway,
+                username,
+                request.config.repo_paths.get(username),
+                logger,
+            )
+            for username in usernames
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for username, result in zip(usernames, results, strict=False):
+            if isinstance(result, Exception):
+                repo_path = request.config.repo_paths.get(username)
                 checks.append(
                     ConnectionCheckResult(
                         username=username,
                         reachable=False,
                         repo_path=repo_path,
-                        message=str(exc),
+                        message=str(result),
                     )
                 )
-                logger({"stage": "stderr", "username": username, "message": str(exc)})
+                logger({"stage": "stderr", "username": username, "message": str(result)})
+                continue
+            checks.append(result)
         logger({"stage": "operation_end", "message": f"连接测试完成，共检查 {len(checks)} 个账户"})
         return ConnectionCheckResponse(checks=checks)
     except Exception as exc:
@@ -168,6 +184,20 @@ async def submit_job(request: SubmitJobRequest, container: AppContainer = Depend
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/jobs/{job_id}/retry", response_model=SubmitJobResponse)
+async def retry_job(job_id: str, container: AppContainer = Depends(get_container)) -> SubmitJobResponse:
+    loop = asyncio.get_running_loop()
+    operation_id, logger = build_command_logger(container, loop, "job-retry")
+    logger({"stage": "operation_start", "message": f"正在为超时任务 {job_id} 提交续训任务"})
+    try:
+        job = await run_in_threadpool(container.job_service.retry_job, job_id, logger)
+        logger({"stage": "operation_end", "message": f"续训任务 {job.job_id} 已提交到 {job.account}"})
+        return SubmitJobResponse(job=job, message=f"续训任务 {job.job_id} 已提交到 {job.account}（操作 {operation_id}）")
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/jobs/{job_id}/cancel", response_model=CancelJobResponse)
 async def cancel_job(job_id: str, container: AppContainer = Depends(get_container)) -> CancelJobResponse:
     loop = asyncio.get_running_loop()
@@ -213,10 +243,24 @@ def read_log(
     offset: int = Query(default=0, ge=0),
     tail: bool = False,
     search: str | None = None,
+    view: Literal["preview", "full"] = Query(default="full"),
     container: AppContainer = Depends(get_container),
 ) -> LogResponse:
     try:
-        return container.log_service.read_log(job_id=job_id, offset=offset, tail=tail, search=search)
+        return container.log_service.read_log(job_id=job_id, offset=offset, tail=tail, search=search, view=view)
+    except SSHError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/jobs/{job_id}/log/evals", response_model=EvalLogResponse)
+def read_eval_log_lines(
+    job_id: str,
+    pattern: str = Query(default="latest_eval="),
+    limit: int = Query(default=12, ge=1, le=50),
+    container: AppContainer = Depends(get_container),
+) -> EvalLogResponse:
+    try:
+        return container.log_service.read_eval_lines(job_id=job_id, pattern=pattern, limit=limit)
     except SSHError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -265,8 +309,10 @@ async def sync_job(job_id: str, container: AppContainer = Depends(get_container)
 @router.websocket("/ws/status")
 async def status_websocket(websocket: WebSocket, container: AppContainer = Depends(get_container)) -> None:
     await container.broadcaster.connect(websocket)
+    await container.scheduler.sync_log_tracking(container.database.list_jobs())
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         container.broadcaster.disconnect(websocket)
+        await container.scheduler.sync_log_tracking(container.database.list_jobs())

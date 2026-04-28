@@ -22,6 +22,7 @@ function NodeItem({ node }: { node: OutputNode }) {
 export function OutputTreeView({ job }: { job: JobRecord | null }) {
   const [tree, setTree] = useState<OutputTreeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activeJobId = job?.job_id ?? null;
 
   const files = useMemo(() => {
     const result: OutputFileItem[] = [];
@@ -43,26 +44,30 @@ export function OutputTreeView({ job }: { job: JobRecord | null }) {
       setTree(null);
       return;
     }
-    getOutputTree(job.job_id)
+    const controller = new AbortController();
+    getOutputTree(job.job_id, controller.signal)
       .then((response) => {
         setTree(response);
         setError(null);
       })
-      .catch((err: Error) => setError(err.message));
-  }, [job]);
+      .catch((err: Error) => {
+        if (err.name === "AbortError") {
+          return;
+        }
+        setError(err.message);
+      });
+    return () => controller.abort();
+  }, [activeJobId]);
 
   return (
-    <SectionCard title="产出浏览器">
+    <SectionCard title="产出">
       {error ? <p className="error-text">{error}</p> : null}
       {job ? (
         <div className="output-summary">
-          <p>
-            当前任务产出文件数：<strong>{files.length}</strong>
-          </p>
-          <p>
-            同步状态：
-            <strong className={job.synced ? "success-text" : "muted-text"}>{job.synced ? " 主账户已检测到对应结果" : " 主账户尚未检测到完整结果"}</strong>
-          </p>
+          <span className="output-summary__pill">文件 {files.length}</span>
+          <span className={`output-summary__pill ${job.synced ? "output-summary__pill--success" : ""}`}>
+            {job.synced ? "已同步" : "未同步"}
+          </span>
         </div>
       ) : null}
       {files.length > 0 ? (
@@ -87,7 +92,7 @@ export function OutputTreeView({ job }: { job: JobRecord | null }) {
           <NodeItem node={tree.root} />
         </ul>
       ) : (
-        <p className="muted-text">请选择一个运行中或已完成的任务以查看产出目录。</p>
+        <p className="muted-text">选择任务后显示产出目录</p>
       )}
     </SectionCard>
   );

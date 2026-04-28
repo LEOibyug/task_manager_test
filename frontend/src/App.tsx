@@ -1,11 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { cancelJob, clearJobs, getConfig, listJobs, refreshJobs, syncJob } from "./api";
+import { cancelJob, clearJobs, getConfig, listJobs, refreshJobs, retryJob, syncJob } from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
 import { JobsPage } from "./pages/JobsPage";
-import type { AppConfig, CommandLogEventPayload, JobRecord, StatusEvent } from "./types";
+import type {
+  AppConfig,
+  CommandLogEventPayload,
+  EvalLogResponse,
+  JobLogCacheEntry,
+  JobRecord,
+  LogResponse,
+  StatusEvent,
+} from "./types";
 import type { ExperimentSummary } from "./types";
 
 const emptyConfig: AppConfig = {
@@ -24,6 +32,8 @@ type PendingRequest = {
   detail: string;
 };
 
+const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -38,6 +48,8 @@ export default function App() {
   const [isClearingJobs, setIsClearingJobs] = useState(false);
   const [syncingJobIds, setSyncingJobIds] = useState<string[]>([]);
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
+  const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
+  const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
 
   useEffect(() => {
     setSelectedJob((current) => {
@@ -52,6 +64,51 @@ export default function App() {
     getConfig().then(setConfig).catch(() => undefined);
     listJobs().then((response) => setJobs(response.jobs)).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const cacheableJobIds = new Set(
+      jobs
+        .filter((job) => TRACKABLE_JOB_STATUSES.has(job.status) || job.job_id === selectedJob?.job_id)
+        .map((job) => job.job_id),
+    );
+    setJobLogCache((current) =>
+      Object.fromEntries(Object.entries(current).filter(([jobId]) => cacheableJobIds.has(jobId))),
+    );
+  }, [jobs, selectedJob?.job_id]);
+
+  function updateJobLogCache(jobId: string, patch: Partial<JobLogCacheEntry>) {
+    setJobLogCache((current) => {
+      const nextEntry: JobLogCacheEntry = current[jobId]
+        ? { ...current[jobId] }
+        : {
+            job_id: jobId,
+            log: null,
+            eval_log: null,
+            log_updated_at: 0,
+            eval_updated_at: 0,
+          };
+      Object.assign(nextEntry, patch);
+      nextEntry.job_id = jobId;
+      return {
+        ...current,
+        [jobId]: nextEntry,
+      };
+    });
+  }
+
+  function applyJobLogStreamUpdate(
+    jobId: string,
+    payload: {
+      log?: LogResponse | null;
+      eval_log?: EvalLogResponse | null;
+    },
+    updatedAt: number,
+  ) {
+    updateJobLogCache(jobId, {
+      ...(payload.log !== undefined ? { log: payload.log ?? null, log_updated_at: updatedAt } : {}),
+      ...(payload.eval_log !== undefined ? { eval_log: payload.eval_log ?? null, eval_updated_at: updatedAt } : {}),
+    });
+  }
 
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
@@ -86,6 +143,21 @@ export default function App() {
           setActiveOperationIds((current) => current.filter((operationId) => operationId !== payload.operation_id));
         }
       }
+      if (message.type === "job_log_cache_update") {
+        const jobId = String(message.payload.job_id ?? "");
+        if (!jobId) {
+          return;
+        }
+        const timestamp = Date.parse(message.timestamp);
+        applyJobLogStreamUpdate(
+          jobId,
+          {
+            log: (message.payload.log as LogResponse | undefined) ?? undefined,
+            eval_log: (message.payload.eval_log as EvalLogResponse | undefined) ?? undefined,
+          },
+          Number.isFinite(timestamp) ? timestamp : Date.now(),
+        );
+      }
       if (message.type === "error") {
         setBanner(`后台刷新出错：${String(message.payload.message ?? "未知错误")}`);
       }
@@ -94,11 +166,11 @@ export default function App() {
     return () => socket.close();
   }, []);
 
-  const tabs = [
+  const tabs = useMemo(() => [
     { id: "config" as const, label: "配置" },
     { id: "experiments" as const, label: "实验" },
     { id: "jobs" as const, label: "任务" },
-  ];
+  ], []);
 
   function beginPendingRequest(label: string, detail: string): string {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -162,21 +234,35 @@ export default function App() {
     }
   }
 
+  async function handleRetry(job: JobRecord) {
+    const pendingId = beginPendingRequest("续训任务", `任务 ${job.job_id} 已超时，正在以相同账户与脚本重新提交。`);
+    setRetryingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      const response = await retryJob(job.job_id);
+      const nextJobs = await listJobs();
+      setJobs(nextJobs.jobs);
+      const nextSelected = nextJobs.jobs.find((item) => item.job_id === response.job.job_id) ?? null;
+      if (nextSelected) {
+        setSelectedJob(nextSelected);
+      }
+    } finally {
+      setRetryingJobIds((current) => current.filter((item) => item !== job.job_id));
+      finishPendingRequest(pendingId);
+    }
+  }
+
   return (
     <div className="app-shell">
-      <div className="hero">
-        <div>
-          <p className="eyebrow">远程实验编排</p>
+      <header className="topbar">
+        <div className="topbar__title">
           <h1>Exp-Queue-Manager</h1>
-          <p className="hero-copy">
-            统一管理 Slurm 实验队列、账户间代码同步、日志查看，以及从分账户回收训练产出到主账户。
-          </p>
+          <p>远程实验队列管理</p>
         </div>
-        <div className="hero-status">
+        <div className="topbar__status">
           <span className="pulse-dot" />
           <p>{banner}</p>
         </div>
-      </div>
+      </header>
 
       <nav className="tab-bar">
         {tabs.map((tab) => (
@@ -211,15 +297,19 @@ export default function App() {
         <JobsPage
           jobs={jobs}
           selectedJob={selectedJob}
+          selectedJobCache={selectedJob ? (jobLogCache[selectedJob.job_id] ?? null) : null}
           onSelectJob={setSelectedJob}
+          onUpdateJobCache={updateJobLogCache}
           onRefresh={handleRefreshJobs}
           onClear={handleClearJobs}
           onSync={handleSync}
           onCancel={handleCancel}
+          onRetry={handleRetry}
           isRefreshing={isRefreshingJobs}
           isClearing={isClearingJobs}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
+          retryingJobIds={retryingJobIds}
         />
       ) : null}
       <OperationConsole

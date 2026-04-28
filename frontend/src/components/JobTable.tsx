@@ -7,8 +7,10 @@ interface JobTableProps {
   onSelect: (job: JobRecord) => void;
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
+  onRetry: (job: JobRecord) => void;
   syncingJobIds: string[];
   cancellingJobIds: string[];
+  retryingJobIds: string[];
 }
 
 export function JobTable({
@@ -17,9 +19,15 @@ export function JobTable({
   onSelect,
   onSync,
   onCancel,
+  onRetry,
   syncingJobIds,
   cancellingJobIds,
+  retryingJobIds,
 }: JobTableProps) {
+  function isTimeoutJob(job: JobRecord) {
+    return job.status === "FAILED" && (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
+  }
+
   return (
     <div className="table-shell">
       <table className="job-table">
@@ -40,17 +48,43 @@ export function JobTable({
           {jobs.map((job) => {
             const isSyncing = syncingJobIds.includes(job.job_id);
             const isCancelling = cancellingJobIds.includes(job.job_id);
+            const isRetrying = retryingJobIds.includes(job.job_id);
+            const canRetry = isTimeoutJob(job);
+            const showRetry = canRetry || isRetrying;
             return (
             <tr
               key={job.job_id}
               className={selectedJobId === job.job_id ? "is-selected" : ""}
               onClick={() => onSelect(job)}
             >
-              <td>{job.job_id}</td>
-              <td>{job.account}</td>
-              <td>{job.experiment}</td>
               <td>
-                <StatusBadge status={job.status} />
+                <div>{job.job_id}</div>
+                {job.resumed_from_job_id ? <div className="job-subnote">续自 {job.resumed_from_job_id}</div> : null}
+                {!job.resumed_from_job_id && job.continuation_root_job_id === job.job_id ? <div className="job-subnote">续训链根任务</div> : null}
+              </td>
+              <td>{job.account}</td>
+              <td>
+                <div>{job.experiment}</div>
+                {job.continuation_root_job_id && job.continuation_root_job_id !== job.job_id ? (
+                  <div className="job-subnote">链路 {job.continuation_root_job_id}</div>
+                ) : null}
+              </td>
+              <td>
+                <div className="job-status-cell">
+                  <StatusBadge status={job.status} />
+                  {showRetry ? (
+                    <button
+                      className="ghost-button compact-action-button"
+                      disabled={!canRetry || isSyncing || isCancelling || isRetrying}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRetry(job);
+                      }}
+                    >
+                      {isRetrying ? "续训中..." : "续训"}
+                    </button>
+                  ) : null}
+                </div>
               </td>
               <td>{job.synced ? "已同步" : job.account === "main" ? "主账户任务" : "未同步"}</td>
               <td>{job.runtime ?? "-"}</td>
@@ -60,7 +94,7 @@ export function JobTable({
                 <div className="table-actions">
                   <button
                     className="ghost-button"
-                    disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling}
+                    disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying}
                     onClick={(event) => {
                       event.stopPropagation();
                       onSync(job);
@@ -70,7 +104,7 @@ export function JobTable({
                   </button>
                   <button
                     className="ghost-button danger-button"
-                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling}
+                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(job);

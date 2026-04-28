@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -141,7 +142,143 @@ class JobService:
             command += f" -w {preferred_gpu_node}"
         return command
 
-    def submit_job(self, request: SubmitJobRequest, logger: CommandLogger | None = None) -> JobRecord:
+    def _is_timeout_job(self, job: JobRecord) -> bool:
+        return job.status == "FAILED" and bool(job.last_error and "TIMEOUT" in job.last_error)
+
+    def _clone_job(self, job: JobRecord) -> JobRecord:
+        return job.model_copy(deep=True)
+
+    def _build_sacct_command(self, username: str, job_ids: list[str]) -> str:
+        if job_ids:
+            return 'sacct -j "{job_ids}" --format=JobID,State,Elapsed -n -P'.format(
+                job_ids=",".join(job_ids)
+            )
+        return 'sacct -u "{username}" --format=JobID,State,Elapsed -n -P'.format(username=username)
+
+    def _should_collect_seff(self, previous: JobRecord | None, current: JobRecord) -> bool:
+        if current.status not in {"COMPLETED", "FAILED", "CANCELLED"}:
+            return False
+        if current.resource_usage is None:
+            return True
+        if previous is None:
+            return False
+        return previous.status != current.status
+
+    def _refresh_account_jobs(
+        self,
+        username: str,
+        existing_jobs: dict[str, JobRecord],
+        logger: CommandLogger | None = None,
+    ) -> list[JobRecord]:
+        account_updates: dict[str, JobRecord] = {}
+
+        def get_or_create(job_id: str) -> JobRecord | None:
+            cached = account_updates.get(job_id)
+            if cached is not None:
+                return cached
+            previous = existing_jobs.get(job_id)
+            if previous is None:
+                return None
+            cloned = self._clone_job(previous)
+            account_updates[job_id] = cloned
+            return cloned
+
+        if logger is not None:
+            logger(
+                {
+                    "stage": "stdout",
+                    "username": username,
+                    "message": "开始通过 squeue 扫描运行中和排队中的任务",
+                }
+            )
+        live_result = self.ssh_gateway.run(
+            username,
+            'squeue -u "{username}" -h -o "%i|%T|%M|%S|%R"'.format(username=username),
+            logger=logger,
+        )
+        if live_result.exit_code == 0:
+            for line in live_result.stdout.splitlines():
+                if not line.strip():
+                    continue
+                job_id, state, runtime, start_time, node_value = (line.split("|", 4) + [""] * 5)[:5]
+                previous = existing_jobs.get(job_id)
+                cached = self._clone_job(previous) if previous is not None else JobRecord(
+                    job_id=job_id,
+                    account=username,
+                    experiment="unknown",
+                    script_path="",
+                    status="UNKNOWN",
+                )
+                cached.status = state if state in {"RUNNING", "PENDING"} else "UNKNOWN"
+                cached.runtime = runtime or cached.runtime
+                cached.nodes = [item.strip() for item in node_value.split(",") if item.strip()]
+                cached.last_error = None
+                if start_time and start_time not in {"N/A", "Unknown"}:
+                    try:
+                        cached.start_time = datetime.fromisoformat(start_time.replace(" ", "T"))
+                    except ValueError:
+                        pass
+                account_updates[job_id] = cached
+
+        tracked_job_ids = [job.job_id for job in existing_jobs.values() if job.account == username]
+        if logger is not None:
+            logger(
+                {
+                    "stage": "stdout",
+                    "username": username,
+                    "message": "开始通过 sacct 回填已完成、失败或取消的任务状态",
+                }
+            )
+        history_result = self.ssh_gateway.run(
+            username,
+            self._build_sacct_command(username, tracked_job_ids),
+            logger=logger,
+        )
+        if history_result.exit_code == 0:
+            for line in history_result.stdout.splitlines():
+                if not line.strip():
+                    continue
+                job_id, state, elapsed = (line.split("|", 2) + ["", ""])[:3]
+                if "." in job_id:
+                    continue
+                previous = existing_jobs.get(job_id)
+                cached = account_updates.get(job_id)
+                if cached is None:
+                    cached = get_or_create(job_id)
+                if cached is None:
+                    continue
+                if state.startswith("COMPLETED"):
+                    cached.status = "COMPLETED"
+                    cached.last_error = None
+                elif state.startswith("CANCELLED"):
+                    cached.status = "CANCELLED"
+                    cached.last_error = "任务已取消"
+                elif state.startswith("FAILED") or state.startswith("TIMEOUT"):
+                    cached.status = "FAILED"
+                    cached.last_error = state
+                cached.runtime = elapsed or cached.runtime
+                if logger is not None:
+                    logger(
+                        {
+                            "stage": "stdout",
+                            "username": username,
+                            "message": f"任务 {job_id} 当前归档状态为 {state}",
+                        }
+                    )
+                if self._should_collect_seff(previous, cached):
+                    seff_result = self.ssh_gateway.run(username, f"seff {job_id}", logger=logger)
+                    if seff_result.exit_code == 0:
+                        cached.resource_usage = self._parse_seff_summary(seff_result.stdout)
+                account_updates[job_id] = cached
+
+        return list(account_updates.values())
+
+    def submit_job(
+        self,
+        request: SubmitJobRequest,
+        logger: CommandLogger | None = None,
+        resumed_from_job: JobRecord | None = None,
+    ) -> JobRecord:
         config = self.config_service.load()
         repo_path = self._repo_path(config, request.account)
         target_script_path = self._map_script_path(config, request.experiment_name, request.script_path, request.account)
@@ -229,6 +366,7 @@ class JobService:
             account=request.account,
             experiment=request.experiment_name,
             script_path=target_script_path,
+            preferred_gpu_node=request.preferred_gpu_node,
             status="PENDING",
             start_time=datetime.now(UTC),
             runtime="0:00",
@@ -236,10 +374,33 @@ class JobService:
             log_path_template=log_path_template,
             job_name=job_name,
             output_path_hint=output_hint,
+            resumed_from_job_id=resumed_from_job.job_id if resumed_from_job else None,
+            continuation_root_job_id=(
+                resumed_from_job.continuation_root_job_id or resumed_from_job.job_id
+            )
+            if resumed_from_job
+            else None,
         )
         self.database.upsert_job(job)
         job.synced = self._resolve_sync_state(config, job)
         return job
+
+    def retry_job(self, job_id: str, logger: CommandLogger | None = None) -> JobRecord:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        if not self._is_timeout_job(job):
+            raise SSHError(f"Job {job_id} is not a timed-out job and cannot be resumed.")
+        if not job.continuation_root_job_id:
+            job.continuation_root_job_id = job.job_id
+            self.database.upsert_job(job)
+        retry_request = SubmitJobRequest(
+            experiment_name=job.experiment,
+            script_path=job.script_path,
+            account=job.account,
+            preferred_gpu_node=job.preferred_gpu_node or (job.nodes[0] if job.nodes else None),
+        )
+        return self.submit_job(retry_request, logger=logger, resumed_from_job=job)
 
     def list_jobs(self) -> JobListResponse:
         return JobListResponse(jobs=self._apply_sync_state(self.database.list_jobs()), refreshed_at=datetime.now(UTC))
@@ -263,93 +424,19 @@ class JobService:
         stored_jobs = [self.normalize_job_record(job) for job in self.database.list_jobs()]
         existing_jobs = {job.job_id: job for job in stored_jobs}
         accounts = [job.account for job in stored_jobs if job.account]
-        for username in list(dict.fromkeys(accounts)):
-            repo_path = config.repo_paths.get(username)
-            if not repo_path:
-                continue
-            if logger is not None:
-                logger(
-                    {
-                        "stage": "stdout",
-                        "username": username,
-                        "message": "开始通过 squeue 扫描运行中和排队中的任务",
-                    }
-                )
-            live_result = self.ssh_gateway.run(
-                username,
-                'squeue -u "{username}" -h -o "%i|%T|%M|%S|%R"'.format(username=username),
-                logger=logger,
-            )
-            if live_result.exit_code == 0:
-                for line in live_result.stdout.splitlines():
-                    if not line.strip():
-                        continue
-                    job_id, state, runtime, start_time, node_value = (line.split("|", 4) + [""] * 5)[:5]
-                    cached = existing_jobs.get(job_id)
-                    if cached is None:
-                        cached = JobRecord(
-                            job_id=job_id,
-                            account=username,
-                            experiment="unknown",
-                            script_path="",
-                            status="UNKNOWN",
-                        )
-                    cached.status = state if state in {"RUNNING", "PENDING"} else "UNKNOWN"
-                    cached.runtime = runtime or cached.runtime
-                    cached.nodes = [item.strip() for item in node_value.split(",") if item.strip()]
-                    cached.last_error = None
-                    if start_time and start_time not in {"N/A", "Unknown"}:
-                        try:
-                            cached.start_time = datetime.fromisoformat(start_time.replace(" ", "T"))
-                        except ValueError:
-                            pass
-                    self.database.upsert_job(cached)
+        usernames = [username for username in dict.fromkeys(accounts) if config.repo_paths.get(username)]
+        if not usernames:
+            return self.list_jobs()
 
-            if logger is not None:
-                logger(
-                    {
-                        "stage": "stdout",
-                        "username": username,
-                        "message": "开始通过 sacct 回填已完成、失败或取消的任务状态",
-                    }
-                )
-            history_result = self.ssh_gateway.run(
-                username,
-                'sacct -u "{username}" --format=JobID,State,Elapsed -n -P'.format(username=username),
-                logger=logger,
-            )
-            if history_result.exit_code == 0:
-                for line in history_result.stdout.splitlines():
-                    if not line.strip():
-                        continue
-                    job_id, state, elapsed = (line.split("|", 2) + ["", ""])[:3]
-                    if "." in job_id:
-                        continue
-                    cached = existing_jobs.get(job_id) or self.database.get_job(job_id)
-                    if cached is None:
-                        continue
-                    if state.startswith("COMPLETED"):
-                        cached.status = "COMPLETED"
-                        cached.last_error = None
-                    elif state.startswith("CANCELLED"):
-                        cached.status = "CANCELLED"
-                        cached.last_error = "任务已取消"
-                    elif state.startswith("FAILED") or state.startswith("TIMEOUT"):
-                        cached.status = "FAILED"
-                        cached.last_error = state
-                    cached.runtime = elapsed or cached.runtime
-                    if logger is not None:
-                        logger(
-                            {
-                                "stage": "stdout",
-                                "username": username,
-                                "message": f"任务 {job_id} 当前归档状态为 {state}",
-                            }
-                        )
-                    seff_result = self.ssh_gateway.run(username, f"seff {job_id}", logger=logger)
-                    if seff_result.exit_code == 0:
-                        cached.resource_usage = self._parse_seff_summary(seff_result.stdout)
-                    self.database.upsert_job(cached)
+        max_workers = min(4, len(usernames))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._refresh_account_jobs, username, existing_jobs, logger): username
+                for username in usernames
+            }
+            for future in as_completed(futures):
+                for job in future.result():
+                    self.database.upsert_job(job)
 
         return self.list_jobs()
 

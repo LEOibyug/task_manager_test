@@ -27,6 +27,7 @@ def build_container() -> AppContainer:
     ssh_gateway = ParamikoSSHGateway(host=config.server_ip or "127.0.0.1", port=config.server_port)
     broadcaster = StatusBroadcaster()
     job_service = JobService(config_service=config_service, ssh_gateway=ssh_gateway, database=database)
+    log_service = LogService(ssh_gateway=ssh_gateway, job_service=job_service, settings=settings)
     container = AppContainer(
         settings=settings,
         database=database,
@@ -34,11 +35,16 @@ def build_container() -> AppContainer:
         ssh_gateway=ssh_gateway,
         experiment_service=ExperimentService(config_service=config_service, ssh_gateway=ssh_gateway),
         job_service=job_service,
-        log_service=LogService(ssh_gateway=ssh_gateway, job_service=job_service, settings=settings),
+        log_service=log_service,
         output_service=OutputService(ssh_gateway=ssh_gateway, job_service=job_service),
         sync_service=SyncService(config_service=config_service, ssh_gateway=ssh_gateway, database=database),
         broadcaster=broadcaster,
-        scheduler=SchedulerService(config_service=config_service, job_service=job_service, broadcaster=broadcaster),
+        scheduler=SchedulerService(
+            config_service=config_service,
+            job_service=job_service,
+            broadcaster=broadcaster,
+            log_service=log_service,
+        ),
     )
     return container
 

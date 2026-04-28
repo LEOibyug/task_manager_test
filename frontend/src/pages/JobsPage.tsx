@@ -2,34 +2,42 @@ import { JobTable } from "../components/JobTable";
 import { LogViewer } from "../components/LogViewer";
 import { OutputTreeView } from "../components/OutputTreeView";
 import { SectionCard } from "../components/SectionCard";
-import type { JobRecord } from "../types";
+import type { JobLogCacheEntry, JobRecord } from "../types";
 
 interface JobsPageProps {
   jobs: JobRecord[];
   selectedJob: JobRecord | null;
+  selectedJobCache: JobLogCacheEntry | null;
   onSelectJob: (job: JobRecord) => void;
+  onUpdateJobCache: (jobId: string, patch: Partial<JobLogCacheEntry>) => void;
   onRefresh: () => void;
   onClear: () => void;
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
+  onRetry: (job: JobRecord) => void;
   isRefreshing: boolean;
   isClearing: boolean;
   syncingJobIds: string[];
   cancellingJobIds: string[];
+  retryingJobIds: string[];
 }
 
 export function JobsPage({
   jobs,
   selectedJob,
+  selectedJobCache,
   onSelectJob,
+  onUpdateJobCache,
   onRefresh,
   onClear,
   onSync,
   onCancel,
+  onRetry,
   isRefreshing,
   isClearing,
   syncingJobIds,
   cancellingJobIds,
+  retryingJobIds,
 }: JobsPageProps) {
   return (
     <div className="jobs-shell">
@@ -52,12 +60,14 @@ export function JobsPage({
           onSelect={onSelectJob}
           onSync={onSync}
           onCancel={onCancel}
+          onRetry={onRetry}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
+          retryingJobIds={retryingJobIds}
         />
       </SectionCard>
       <div className="jobs-detail-grid">
-        <LogViewer job={selectedJob} />
+        <LogViewer job={selectedJob} cacheEntry={selectedJobCache} onCacheUpdate={onUpdateJobCache} />
         <OutputTreeView job={selectedJob} />
       </div>
     </div>
