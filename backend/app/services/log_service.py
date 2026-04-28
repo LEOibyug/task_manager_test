@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections import OrderedDict
 from typing import Literal
 
 from app.core.settings import RuntimeSettings
-from app.schemas import EvalLogEntry, EvalLogResponse, LogResponse
+from app.schemas import EvalLogEntry, EvalLogResponse, JobRecord, LogResponse
 from app.services.job_service import JobService
-from app.services.ssh_service import SSHError, SSHGatewayProtocol
+from app.services.ssh_service import FollowStreamProtocol, SSHError, SSHGatewayProtocol
 
 
 class LogService:
@@ -15,6 +16,15 @@ class LogService:
         self.ssh_gateway = ssh_gateway
         self.job_service = job_service
         self.settings = settings
+
+    def resolve_job_log_record(self, job_id: str) -> JobRecord:
+        job = self.job_service.database.get_job(job_id)
+        if job is None or not job.log_path:
+            raise SSHError(f"Log path not available for job {job_id}")
+        job = self.job_service.normalize_job_record(job)
+        if not job.log_path:
+            raise SSHError(f"Log path not available for job {job_id}")
+        return job
 
     def read_log(
         self,
@@ -24,12 +34,7 @@ class LogService:
         search: str | None = None,
         view: Literal["preview", "full"] = "full",
     ) -> LogResponse:
-        job = self.job_service.database.get_job(job_id)
-        if job is None or not job.log_path:
-            raise SSHError(f"Log path not available for job {job_id}")
-        job = self.job_service.normalize_job_record(job)
-        if not job.log_path:
-            raise SSHError(f"Log path not available for job {job_id}")
+        job = self.resolve_job_log_record(job_id)
         if search:
             content = self.ssh_gateway.read_file(job.account, job.log_path)
             filtered = [line for line in content.splitlines() if search.lower() in line.lower()]
@@ -82,12 +87,7 @@ class LogService:
         )
 
     def read_eval_lines(self, job_id: str, pattern: str = "latest_eval=", limit: int = 12) -> EvalLogResponse:
-        job = self.job_service.database.get_job(job_id)
-        if job is None or not job.log_path:
-            raise SSHError(f"Log path not available for job {job_id}")
-        job = self.job_service.normalize_job_record(job)
-        if not job.log_path:
-            raise SSHError(f"Log path not available for job {job_id}")
+        job = self.resolve_job_log_record(job_id)
 
         safe_pattern = pattern.strip() or "latest_eval="
         safe_limit = min(max(limit, 1), 50)
@@ -120,6 +120,45 @@ class LogService:
             pattern=safe_pattern,
             entries=list(deduped_entries.values()),
         )
+
+    def open_follow_stream(self, job_id: str, tail_lines: int = 200) -> tuple[JobRecord, FollowStreamProtocol]:
+        job = self.resolve_job_log_record(job_id)
+        return job, self.ssh_gateway.open_follow_stream(job.account, job.log_path, tail_lines=tail_lines)
+
+    def build_preview_log_response(self, job_id: str, log_path: str, content_bytes: bytes, size: int) -> LogResponse:
+        bounded = content_bytes[-self.settings.preview_log_chunk_bytes :]
+        decoded = bounded.decode("utf-8", errors="replace")
+        start = max(0, size - len(bounded))
+        return LogResponse(
+            job_id=job_id,
+            log_path=log_path,
+            content=decoded,
+            next_offset=size,
+            size=size,
+            truncated=start > 0,
+            view="preview",
+        )
+
+    def merge_eval_entries(
+        self,
+        existing_entries: list[EvalLogEntry],
+        text: str,
+        limit: int = 12,
+    ) -> list[EvalLogEntry]:
+        safe_limit = min(max(limit, 1), 50)
+        deduped_entries: "OrderedDict[str, EvalLogEntry]" = OrderedDict()
+        for entry in existing_entries[-safe_limit:]:
+            deduped_entries[entry.content] = entry
+        normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+        for raw_line in normalized_text.split("\n"):
+            content = self._extract_latest_eval_content(raw_line)
+            if not content:
+                continue
+            deduped_entries.pop(content, None)
+            deduped_entries[content] = EvalLogEntry(line_number=None, content=content)
+        while len(deduped_entries) > safe_limit:
+            deduped_entries.popitem(last=False)
+        return list(deduped_entries.values())
 
     def _extract_latest_eval_content(self, raw_content: str) -> str | None:
         cleaned = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw_content)

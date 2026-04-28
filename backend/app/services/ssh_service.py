@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from queue import Empty, Queue
 from threading import Lock
+from threading import Event as ThreadEvent
+from threading import Thread
 import time
 from typing import Any, Callable, Protocol
+import shlex
 
 try:
     import paramiko
@@ -52,12 +56,115 @@ class SSHGatewayProtocol(Protocol):
     def listdir(self, username: str, path: str) -> list[tuple[str, bool]]:
         ...
 
+    def open_follow_stream(self, username: str, path: str, tail_lines: int = 200) -> "FollowStreamProtocol":
+        ...
+
     def close(self) -> None:
         ...
 
 
 class SSHError(RuntimeError):
     pass
+
+
+class FollowStreamProtocol(Protocol):
+    def read_available(self) -> str:
+        ...
+
+    def is_closed(self) -> bool:
+        ...
+
+    def close(self) -> None:
+        ...
+
+
+class ParamikoFollowStream:
+    def __init__(self, host: str, port: int, username: str, path: str, tail_lines: int = 200) -> None:
+        self.host = host
+        self.port = port
+        self.username = username
+        self.path = path
+        self.tail_lines = max(1, tail_lines)
+        self._queue: Queue[str] = Queue()
+        self._stop = ThreadEvent()
+        self._closed = ThreadEvent()
+        self._error: str | None = None
+        self._client: "paramiko.SSHClient | None" = None
+        self._thread = Thread(target=self._run, daemon=True, name=f"log-follow-{username}")
+        self._thread.start()
+
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    def _build_command(self) -> str:
+        quoted_path = shlex.quote(self.path)
+        return (
+            "sh -lc 'path={path}; "
+            "while [ ! -e \"$path\" ]; do sleep 1; done; "
+            "exec tail -n {tail_lines} -F \"$path\"'"
+        ).format(path=quoted_path, tail_lines=self.tail_lines)
+
+    def _run(self) -> None:
+        try:
+            if paramiko is None:
+                raise SSHError("paramiko is not installed. Please install backend dependencies.")
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.connect(self.host, port=self.port, username=self.username, look_for_keys=True)
+            self._client = client
+            _, stdout, stderr = client.exec_command(self._build_command(), get_pty=False)
+            channel = stdout.channel
+            while not self._stop.is_set():
+                made_progress = False
+                if channel.recv_ready():
+                    data = channel.recv(4096)
+                    if data:
+                        self._queue.put(data.decode("utf-8", errors="replace"))
+                    made_progress = True
+                if channel.recv_stderr_ready():
+                    data = channel.recv_stderr(4096)
+                    if data:
+                        # Follow command stderr is intentionally hidden from the user log view,
+                        # but we keep the latest error for diagnostics/reconnect decisions.
+                        self._error = data.decode("utf-8", errors="replace").strip() or self._error
+                    made_progress = True
+                if channel.exit_status_ready():
+                    if not channel.recv_ready() and not channel.recv_stderr_ready():
+                        break
+                if not made_progress:
+                    time.sleep(0.05)
+        except Exception as exc:  # pragma: no cover - depends on external SSH server
+            self._error = str(exc)
+        finally:
+            self._closed.set()
+            try:
+                if self._client is not None:
+                    self._client.close()
+            except Exception:
+                pass
+            self._client = None
+
+    def read_available(self) -> str:
+        chunks: list[str] = []
+        while True:
+            try:
+                chunks.append(self._queue.get_nowait())
+            except Empty:
+                break
+        return "".join(chunks)
+
+    def is_closed(self) -> bool:
+        return self._closed.is_set()
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            if self._client is not None:
+                self._client.close()
+        except Exception:
+            pass
+        self._thread.join(timeout=1.0)
 
 
 class ParamikoSSHGateway:
@@ -220,6 +327,9 @@ class ParamikoSSHGateway:
                     entries.append((str(PurePosixPath(path) / entry.filename), is_dir))
                 return entries
 
+    def open_follow_stream(self, username: str, path: str, tail_lines: int = 200) -> FollowStreamProtocol:
+        return ParamikoFollowStream(self.host, self.port, username, path, tail_lines=tail_lines)
+
     def close(self) -> None:
         with self._clients_lock:
             for client in self._clients.values():
@@ -233,9 +343,11 @@ class InMemorySSHGateway:
         self,
         files: dict[str, dict[str, str | bytes]] | None = None,
         commands: dict[tuple[str, str], CommandResult] | None = None,
+        streams: dict[tuple[str, str], list[str]] | None = None,
     ) -> None:
         self.files = files or {}
         self.commands = commands or {}
+        self.streams = streams or {}
 
     def run(self, username: str, command: str, cwd: str | None = None) -> CommandResult:
         return self._run(username, command, cwd=cwd)
@@ -358,5 +470,29 @@ class InMemorySSHGateway:
             children[child_path] = is_dir
         return sorted(children.items())
 
+    def open_follow_stream(self, username: str, path: str, tail_lines: int = 200) -> FollowStreamProtocol:
+        return InMemoryFollowStream(self.streams.get((username, path), []))
+
     def close(self) -> None:
         return None
+
+
+class InMemoryFollowStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = list(chunks)
+        self._closed = False
+
+    def read_available(self) -> str:
+        if not self._chunks:
+            return ""
+        chunk = "".join(self._chunks)
+        self._chunks.clear()
+        self._closed = True
+        return chunk
+
+    def is_closed(self) -> bool:
+        return self._closed and not self._chunks
+
+    def close(self) -> None:
+        self._chunks.clear()
+        self._closed = True
