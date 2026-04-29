@@ -146,6 +146,47 @@ class JobService:
     def _clone_job(self, job: JobRecord) -> JobRecord:
         return job.model_copy(deep=True)
 
+    def _merge_job_metadata(self, refreshed_job: JobRecord, current_job: JobRecord | None) -> JobRecord:
+        if current_job is None:
+            return refreshed_job
+
+        merged = self._clone_job(refreshed_job)
+
+        if (
+            merged.experiment.strip().lower() == "unknown"
+            and current_job.experiment
+            and current_job.experiment.strip().lower() != "unknown"
+        ):
+            merged.experiment = current_job.experiment
+        if not merged.script_path and current_job.script_path:
+            merged.script_path = current_job.script_path
+        if merged.preferred_gpu_node is None and current_job.preferred_gpu_node is not None:
+            merged.preferred_gpu_node = current_job.preferred_gpu_node
+        if merged.start_time is None and current_job.start_time is not None:
+            merged.start_time = current_job.start_time
+        if not merged.runtime and current_job.runtime:
+            merged.runtime = current_job.runtime
+        if not merged.nodes and current_job.nodes:
+            merged.nodes = list(current_job.nodes)
+        if merged.resource_usage is None and current_job.resource_usage is not None:
+            merged.resource_usage = current_job.resource_usage
+        if merged.max_runtime_hours == 48 and current_job.max_runtime_hours != 48:
+            merged.max_runtime_hours = current_job.max_runtime_hours
+        if merged.log_path is None and current_job.log_path is not None:
+            merged.log_path = current_job.log_path
+        if merged.log_path_template is None and current_job.log_path_template is not None:
+            merged.log_path_template = current_job.log_path_template
+        if merged.job_name is None and current_job.job_name is not None:
+            merged.job_name = current_job.job_name
+        if merged.output_path_hint is None and current_job.output_path_hint is not None:
+            merged.output_path_hint = current_job.output_path_hint
+        if merged.resumed_from_job_id is None and current_job.resumed_from_job_id is not None:
+            merged.resumed_from_job_id = current_job.resumed_from_job_id
+        if merged.continuation_root_job_id is None and current_job.continuation_root_job_id is not None:
+            merged.continuation_root_job_id = current_job.continuation_root_job_id
+
+        return merged
+
     def _build_sacct_command(self, username: str, job_ids: list[str]) -> str:
         if job_ids:
             return 'sacct -j "{job_ids}" --format=JobID,State,Elapsed -n -P'.format(
@@ -434,7 +475,7 @@ class JobService:
             }
             for future in as_completed(futures):
                 for job in future.result():
-                    self.database.upsert_job(job)
+                    self.database.upsert_job(self._merge_job_metadata(job, self.database.get_job(job.job_id)))
 
         return self.list_jobs()
 

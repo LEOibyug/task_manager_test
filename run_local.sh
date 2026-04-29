@@ -37,6 +37,10 @@ print_step() {
   printf '\n==> %s\n' "$1"
 }
 
+print_note() {
+  printf '[run_local.sh] %s\n' "$1"
+}
+
 fail() {
   printf '\n[run_local.sh] %s\n' "$1" >&2
   exit 1
@@ -55,6 +59,67 @@ require_node_version() {
   if [[ -z "$node_major" || "$node_major" -lt 18 ]]; then
     fail "Node.js 18 or newer is required."
   fi
+}
+
+git_worktree_is_clean() {
+  [[ -z "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]
+}
+
+auto_update_repo() {
+  if ! command -v git >/dev/null 2>&1; then
+    print_note "Git not found in PATH; skipping automatic repository update."
+    return
+  fi
+
+  if ! git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    print_note "Current directory is not a Git worktree; skipping automatic repository update."
+    return
+  fi
+
+  local branch upstream local_sha remote_sha base_sha
+  branch="$(git -C "$ROOT_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ -z "$branch" ]]; then
+    print_note "Repository is in detached HEAD state; skipping automatic repository update."
+    return
+  fi
+
+  upstream="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [[ -z "$upstream" ]]; then
+    print_note "Branch '$branch' has no upstream configured; skipping automatic repository update."
+    return
+  fi
+
+  print_step "Checking Git remote updates"
+  if ! git -C "$ROOT_DIR" fetch --quiet --prune; then
+    print_note "Failed to fetch remote updates; continuing with local checkout."
+    return
+  fi
+
+  local_sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  remote_sha="$(git -C "$ROOT_DIR" rev-parse "$upstream")"
+  base_sha="$(git -C "$ROOT_DIR" merge-base HEAD "$upstream")"
+
+  if [[ "$local_sha" == "$remote_sha" ]]; then
+    print_note "Repository is already up to date."
+    return
+  fi
+
+  if [[ "$local_sha" == "$base_sha" ]]; then
+    if ! git_worktree_is_clean; then
+      print_note "Remote has updates, but local tracked changes exist. Skipping auto-pull."
+      return
+    fi
+    print_note "Remote updates detected on $upstream; applying fast-forward pull."
+    git -C "$ROOT_DIR" pull --ff-only
+    return
+  fi
+
+  if [[ "$remote_sha" == "$base_sha" ]]; then
+    print_note "Local branch is ahead of $upstream; keeping local checkout."
+    return
+  fi
+
+  print_note "Local and remote branches have diverged; skipping auto-pull."
 }
 
 needs_backend_install() {
@@ -151,6 +216,7 @@ command -v npm >/dev/null 2>&1 || fail "npm is required but was not found in PAT
 require_python_version
 require_node_version
 mkdir -p "$STATE_DIR"
+auto_update_repo
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
   print_step "Creating project virtual environment"
@@ -163,6 +229,8 @@ if needs_backend_install; then
   "$VENV_PYTHON" -m pip install --upgrade pip
   "$VENV_PYTHON" -m pip install -e "$BACKEND_DIR"
   touch "$BACKEND_DEPS_STAMP"
+else
+  print_note "Backend dependencies are up to date; skipping install."
 fi
 
 print_step "Checking frontend dependencies"
@@ -170,12 +238,16 @@ if needs_frontend_install; then
   print_step "Installing frontend dependencies"
   install_frontend_dependencies
   touch "$FRONTEND_DEPS_STAMP"
+else
+  print_note "Frontend dependencies are up to date; skipping install."
 fi
 
 if needs_frontend_build; then
   print_step "Building frontend bundle"
   (cd "$FRONTEND_DIR" && npm run build)
   touch "$FRONTEND_BUILD_STAMP"
+else
+  print_note "Frontend bundle is up to date; skipping build."
 fi
 
 print_step "Starting Exp-Queue-Manager"

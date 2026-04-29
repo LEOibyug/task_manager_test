@@ -178,6 +178,12 @@ async def submit_job(request: SubmitJobRequest, container: AppContainer = Depend
     try:
         job = await run_in_threadpool(container.job_service.submit_job, request, logger)
         logger({"stage": "operation_end", "message": f"任务 {job.job_id} 已提交到 {job.account}"})
+        jobs_result = await run_in_threadpool(container.job_service.list_jobs)
+        asyncio.create_task(
+            container.broadcaster.broadcast(
+                container.scheduler.build_jobs_refreshed_event(jobs_result.jobs)
+            )
+        )
         return SubmitJobResponse(job=job, message=f"任务 {job.job_id} 已提交到 {job.account}（操作 {operation_id}）")
     except SSHError as exc:
         logger({"stage": "operation_error", "message": str(exc)})

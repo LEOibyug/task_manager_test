@@ -4,7 +4,7 @@ Exp-Queue-Manager 是一个本地 Web 应用，用于管理远端服务器上的
 
 - `backend/`：FastAPI 后端，负责 SSH 连接、任务调度、日志与结果同步、SQLite 持久化
 - `frontend/`：React + TypeScript 前端界面
-- `run_local.sh`：仓库级一键启动脚本
+- `run_local.sh` / `run_local.bat`：仓库级一键启动脚本
 
 ---
 
@@ -21,6 +21,12 @@ cd Task_Manager
 
 ```bash
 ./run_local.sh
+```
+
+Windows 下也可以直接运行：
+
+```bat
+run_local.bat
 ```
 
 本 README 就是为这个目标准备的运行环境指导。
@@ -59,16 +65,17 @@ npm --version
 
 ### 3.2 脚本会自动完成什么
 
-`run_local.sh` 已经处理了首次启动最常见的准备动作：
+`run_local.sh` / `run_local.bat` 已经处理了首次启动最常见的准备动作：
 
 1. 检查 `python3` / `node` / `npm` 是否存在
 2. 校验 Python 版本是否为 **3.11+**
 3. 校验 Node.js 版本是否为 **18+**
-4. 若 `.venv/` 不存在，则自动创建虚拟环境
-5. 若后端依赖缺失，或 `backend/pyproject.toml` 有变更，则自动重新安装后端依赖
-6. 若前端依赖缺失，或 `frontend/package.json` / `package-lock.json` 有变更，则自动安装前端依赖
-7. 若前端静态资源不存在，或前端源码有更新，则自动重新构建 `frontend/dist/`
-8. 启动 FastAPI，并在 `http://127.0.0.1:8000` 提供页面
+4. 启动前自动检查 Git 远端更新；若当前分支可安全 fast-forward，则自动执行 `git pull --ff-only`
+5. 若 `.venv/` 不存在，则自动创建虚拟环境
+6. 若后端依赖缺失，或 `backend/pyproject.toml` 有变更，则自动重新安装后端依赖；否则跳过
+7. 若前端依赖缺失，或 `frontend/package.json` / `package-lock.json` 有变更，则自动安装前端依赖；否则跳过
+8. 若前端静态资源不存在，或前端源码有更新，则自动重新构建 `frontend/dist/`；否则跳过
+9. 启动 FastAPI，并在 `http://127.0.0.1:8000` 提供页面
 
 ### 3.3 首次启动后的访问地址
 
@@ -130,6 +137,14 @@ backend/data/runtime-config/config.json
 git clone <your-repo-url>
 cd Task_Manager
 ./run_local.sh
+```
+
+Windows:
+
+```bat
+git clone <your-repo-url>
+cd Task_Manager
+run_local.bat
 ```
 
 然后：
@@ -249,6 +264,17 @@ backend/data/app.db
 ```
 
 脚本会在检测到 `backend/pyproject.toml` 变化后自动重新安装依赖。
+
+### 8.6 为什么 run_local 没有自动 pull 最新代码
+
+`run_local` 的自动更新采用“尽量安全”的策略，只会在以下条件满足时执行：
+
+- 当前目录是 Git 仓库
+- 当前分支配置了 upstream
+- 远端更新可以通过 fast-forward 合并
+- 本地没有未提交的已跟踪文件修改
+
+如果本地分支领先远端、与远端分叉、处于 detached HEAD，或本地有已跟踪文件改动，脚本会跳过自动 pull，并继续使用当前代码启动。
 
 ---
 

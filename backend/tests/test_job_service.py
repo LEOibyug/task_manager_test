@@ -313,6 +313,49 @@ class JobServiceTestCase(unittest.TestCase):
         jobs = service.refresh_jobs().jobs
         self.assertTrue(any(job.job_id == "50001" and job.account == "main" for job in jobs))
 
+    def test_refresh_jobs_does_not_overwrite_known_experiment_with_unknown_placeholder(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="50002",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                preferred_gpu_node="gpu1",
+                status="PENDING",
+                log_path="/srv/worker1/repo/logs/train.out",
+                output_path_hint="output/exp001",
+            )
+        )
+
+        def fake_refresh_account_jobs(username, existing_jobs, logger=None):
+            self.assertEqual(username, "worker1")
+            return [
+                JobRecord(
+                    job_id="50002",
+                    account="worker1",
+                    experiment="unknown",
+                    script_path="",
+                    status="RUNNING",
+                    runtime="00:05",
+                )
+            ]
+
+        service._refresh_account_jobs = fake_refresh_account_jobs  # type: ignore[method-assign]
+
+        jobs = service.refresh_jobs().jobs
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].job_id, "50002")
+        self.assertEqual(jobs[0].experiment, "exp001")
+        self.assertEqual(jobs[0].script_path, "/srv/worker1/repo/experiments/exp001/train.sbatch")
+        self.assertEqual(jobs[0].preferred_gpu_node, "gpu1")
+        self.assertEqual(jobs[0].log_path, "/srv/worker1/repo/logs/train.out")
+        self.assertEqual(jobs[0].output_path_hint, "output/exp001")
+        self.assertEqual(jobs[0].status, "RUNNING")
+        self.assertEqual(jobs[0].runtime, "00:05")
+
     def test_clear_jobs_removes_all_records(self) -> None:
         gateway = InMemorySSHGateway()
         service = JobService(self.config_service, gateway, self.database)
