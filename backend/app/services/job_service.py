@@ -61,16 +61,12 @@ class JobService:
         if job.account == config.main_username:
             return True
         main_repo = config.repo_paths.get(config.main_username)
-        sub_repo = config.repo_paths.get(job.account)
-        if not main_repo or not sub_repo:
+        if not main_repo:
             return False
-        log_target = self._map_path_between_accounts(sub_repo, main_repo, job.log_path)
-        output_target = self._map_path_between_accounts(sub_repo, main_repo, job.output_path_hint)
-        fallback_output_target = str(PurePosixPath(main_repo) / "output" / job.experiment)
+        log_target = self._build_synced_log_path(main_repo, job.log_path)
+        output_target = str(PurePosixPath(main_repo) / "output" / job.experiment)
         log_exists = self.ssh_gateway.stat(config.main_username, log_target) if log_target else False
         output_exists = self.ssh_gateway.stat(config.main_username, output_target) if output_target else False
-        if not output_exists:
-            output_exists = self.ssh_gateway.stat(config.main_username, fallback_output_target)
         return log_exists and output_exists
 
     def _apply_sync_state(self, jobs: list[JobRecord]) -> list[JobRecord]:
@@ -107,10 +103,12 @@ class JobService:
                 self.database.upsert_job(job)
         return job
 
+    def _build_synced_log_path(self, main_repo: str, log_path: str | None) -> str | None:
+        if not log_path:
+            return None
+        return str(PurePosixPath(main_repo) / "output" / "sbatch" / PurePosixPath(log_path).name)
+
     def _build_output_hint(self, experiment_name: str, job_id: str, job_name: str | None) -> str:
-        if job_name:
-            tag = job_name.replace(" ", "_")
-            return f"output/{experiment_name}/model_config/{tag}"
         return f"output/{experiment_name}"
 
     def parse_sbatch_metadata(self, script_content: str, script_path: str, experiment_name: str) -> tuple[str, str | None]:

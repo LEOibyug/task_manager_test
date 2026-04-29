@@ -3,6 +3,7 @@ import { StatusBadge } from "./StatusBadge";
 
 interface JobTableProps {
   jobs: JobRecord[];
+  mainUsername: string;
   selectedJobId: string | null;
   onSelect: (job: JobRecord) => void;
   onSync: (job: JobRecord) => void;
@@ -15,6 +16,7 @@ interface JobTableProps {
 
 export function JobTable({
   jobs,
+  mainUsername,
   selectedJobId,
   onSelect,
   onSync,
@@ -49,6 +51,7 @@ export function JobTable({
             const isSyncing = syncingJobIds.includes(job.job_id);
             const isCancelling = cancellingJobIds.includes(job.job_id);
             const isRetrying = retryingJobIds.includes(job.job_id);
+            const isMainAccountJob = job.account === mainUsername;
             const canRetry = isTimeoutJob(job);
             const showRetry = canRetry || isRetrying;
             return (
@@ -86,22 +89,24 @@ export function JobTable({
                   ) : null}
                 </div>
               </td>
-              <td>{job.synced ? "已同步" : job.account === "main" ? "主账户任务" : "未同步"}</td>
+              <td>{isMainAccountJob ? "主账户任务" : job.synced ? "已同步" : "未同步"}</td>
               <td>{job.runtime ?? "-"}</td>
               <td>{job.nodes.join(", ") || "-"}</td>
               <td>{job.max_runtime_hours}h</td>
               <td>
                 <div className="table-actions">
-                  <button
-                    className="ghost-button"
-                    disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onSync(job);
-                    }}
-                  >
-                    {job.synced ? "已同步" : isSyncing ? "同步中..." : "同步"}
-                  </button>
+                  {!isMainAccountJob ? (
+                    <button
+                      className="ghost-button"
+                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSync(job);
+                      }}
+                    >
+                      {job.synced ? "已同步" : isSyncing ? "同步中..." : "同步"}
+                    </button>
+                  ) : null}
                   <button
                     className="ghost-button danger-button"
                     disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying}

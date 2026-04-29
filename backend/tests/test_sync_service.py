@@ -35,7 +35,7 @@ class SyncServiceTestCase(unittest.TestCase):
                 script_path="/srv/worker1/repo/experiments/exp001/run.sbatch",
                 status="COMPLETED",
                 log_path="/srv/worker1/repo/logs/run.out",
-                output_path_hint="output/exp001/model_config/runA",
+                output_path_hint="output/exp001",
             )
             database.upsert_job(job)
             commands = {
@@ -45,7 +45,7 @@ class SyncServiceTestCase(unittest.TestCase):
                     stderr="",
                     exit_code=0,
                 ),
-                ("worker1", "::ssh main@workstation 'mkdir -p /srv/main/repo/logs'"): CommandResult(
+                ("worker1", "::ssh main@workstation 'mkdir -p /srv/main/repo/output/sbatch'"): CommandResult(
                     command="mkdir logs",
                     stdout="",
                     stderr="",
@@ -57,7 +57,7 @@ class SyncServiceTestCase(unittest.TestCase):
                     stderr="",
                     exit_code=0,
                 ),
-                ("worker1", "::scp -r /srv/worker1/repo/logs/run.out main@workstation:/srv/main/repo/logs/run.out"): CommandResult(
+                ("worker1", "::scp -r /srv/worker1/repo/logs/run.out main@workstation:/srv/main/repo/output/sbatch/run.out"): CommandResult(
                     command="scp log",
                     stdout="",
                     stderr="",

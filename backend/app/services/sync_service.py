@@ -65,13 +65,8 @@ class SyncService:
         return job
 
     def _map_log_target(self, main_repo: str, sub_repo: str, log_path: str) -> str:
-        log_posix = PurePosixPath(log_path)
-        if log_posix.is_absolute() and str(log_posix).startswith(sub_repo):
-            relative = log_posix.relative_to(sub_repo)
-            return str(PurePosixPath(main_repo) / relative)
-        if log_posix.is_absolute():
-            return str(PurePosixPath(main_repo) / log_posix.name)
-        return str(PurePosixPath(main_repo) / log_posix)
+        del sub_repo
+        return str(PurePosixPath(main_repo) / "output" / "sbatch" / PurePosixPath(log_path).name)
 
     def _repo_path(self, config: AppConfig, username: str) -> str:
         repo_path = config.repo_paths.get(username)

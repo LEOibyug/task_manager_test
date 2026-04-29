@@ -12,13 +12,16 @@ class ExperimentService:
         self.config_service = config_service
         self.ssh_gateway = ssh_gateway
 
-    def list_experiments(self) -> list[ExperimentSummary]:
+    def _main_repo_path(self) -> tuple[str, str]:
         config = self.config_service.load()
-        repo_path = config.repo_paths.get(config.main_username, "")
-        if not repo_path or not config.main_username:
+        return config.main_username, config.repo_paths.get(config.main_username, "")
+
+    def list_experiments(self) -> list[ExperimentSummary]:
+        main_username, repo_path = self._main_repo_path()
+        if not repo_path or not main_username:
             return []
         experiments_root = str(PurePosixPath(repo_path) / "experiments")
-        entries = self.ssh_gateway.listdir(config.main_username, experiments_root)
+        entries = self.ssh_gateway.listdir(main_username, experiments_root)
         summaries = []
         for path, is_dir in entries:
             if is_dir:
@@ -26,10 +29,9 @@ class ExperimentService:
         return sorted(summaries, key=lambda item: item.name)
 
     def get_experiment_detail(self, experiment_name: str) -> ExperimentDetail:
-        config = self.config_service.load()
-        repo_path = config.repo_paths.get(config.main_username, "")
+        main_username, repo_path = self._main_repo_path()
         base_path = str(PurePosixPath(repo_path) / "experiments" / experiment_name)
-        entries = self.ssh_gateway.listdir(config.main_username, base_path)
+        entries = self.ssh_gateway.listdir(main_username, base_path)
         files: list[ExperimentFile] = []
         for path, is_dir in entries:
             name = PurePosixPath(path).name
@@ -43,4 +45,3 @@ class ExperimentService:
             experiment=ExperimentSummary(name=experiment_name, path=base_path),
             files=sorted(files, key=lambda item: (not item.is_dir, item.name)),
         )
-

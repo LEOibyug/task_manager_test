@@ -5,6 +5,7 @@ import { SectionCard } from "../components/SectionCard";
 import type { JobLogCacheEntry, JobRecord } from "../types";
 
 interface JobsPageProps {
+  mainUsername: string;
   jobs: JobRecord[];
   selectedJob: JobRecord | null;
   selectedJobCache: JobLogCacheEntry | null;
@@ -23,6 +24,7 @@ interface JobsPageProps {
 }
 
 export function JobsPage({
+  mainUsername,
   jobs,
   selectedJob,
   selectedJobCache,
@@ -56,6 +58,7 @@ export function JobsPage({
       >
         <JobTable
           jobs={jobs}
+          mainUsername={mainUsername}
           selectedJobId={selectedJob?.job_id ?? null}
           onSelect={onSelectJob}
           onSync={onSync}

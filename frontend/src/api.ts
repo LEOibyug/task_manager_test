@@ -14,6 +14,10 @@ const jsonHeaders = {
   "Content-Type": "application/json",
 };
 
+async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
+  return handleResponse<T>(await fetch(input, init));
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
@@ -23,47 +27,43 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function getConfig(): Promise<AppConfig> {
-  return handleResponse<AppConfig>(await fetch("/api/config"));
+  return requestJson<AppConfig>("/api/config");
 }
 
 export async function saveConfig(config: AppConfig): Promise<AppConfig> {
-  return handleResponse<AppConfig>(
-    await fetch("/api/config", {
-      method: "PUT",
-      headers: jsonHeaders,
-      body: JSON.stringify(config),
-    }),
-  );
+  return requestJson<AppConfig>("/api/config", {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(config),
+  });
 }
 
 export async function testConnection(config: AppConfig): Promise<ConnectionCheckResponse> {
-  return handleResponse<ConnectionCheckResponse>(
-    await fetch("/api/connection/test", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({ config }),
-    }),
-  );
+  return requestJson<ConnectionCheckResponse>("/api/connection/test", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ config }),
+  });
 }
 
 export async function listExperiments(): Promise<ExperimentSummary[]> {
-  return handleResponse<ExperimentSummary[]>(await fetch("/api/experiments"));
+  return requestJson<ExperimentSummary[]>("/api/experiments");
 }
 
 export async function getExperimentDetail(experimentName: string): Promise<ExperimentDetail> {
-  return handleResponse<ExperimentDetail>(await fetch(`/api/experiments/${encodeURIComponent(experimentName)}/files`));
+  return requestJson<ExperimentDetail>(`/api/experiments/${encodeURIComponent(experimentName)}/files`);
 }
 
 export async function listJobs(): Promise<JobsResponse> {
-  return handleResponse<JobsResponse>(await fetch("/api/jobs"));
+  return requestJson<JobsResponse>("/api/jobs");
 }
 
 export async function refreshJobs(): Promise<JobsResponse> {
-  return handleResponse<JobsResponse>(await fetch("/api/jobs/refresh", { method: "POST" }));
+  return requestJson<JobsResponse>("/api/jobs/refresh", { method: "POST" });
 }
 
 export async function clearJobs(): Promise<JobsResponse> {
-  return handleResponse<JobsResponse>(await fetch("/api/jobs/clear", { method: "POST" }));
+  return requestJson<JobsResponse>("/api/jobs/clear", { method: "POST" });
 }
 
 export async function submitJob(payload: {
@@ -72,13 +72,11 @@ export async function submitJob(payload: {
   account: string;
   preferred_gpu_node: "gpu1" | "gpu2" | "gpu3" | null;
 }): Promise<{ message: string }> {
-  return handleResponse<{ message: string }>(
-    await fetch("/api/jobs/submit", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify(payload),
-    }),
-  );
+  return requestJson<{ message: string }>("/api/jobs/submit", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getJobLog(
@@ -98,19 +96,15 @@ export async function getJobLog(
   if (options.view) {
     params.set("view", options.view);
   }
-  return handleResponse<LogResponse>(
-    await fetch(`/api/jobs/${jobId}/log?${params.toString()}`, {
-      signal: options.signal,
-    }),
-  );
+  return requestJson<LogResponse>(`/api/jobs/${jobId}/log?${params.toString()}`, {
+    signal: options.signal,
+  });
 }
 
 export async function getOutputTree(jobId: string, signal?: AbortSignal): Promise<OutputTreeResponse> {
-  return handleResponse<OutputTreeResponse>(
-    await fetch(`/api/jobs/${jobId}/outputs/tree`, {
-      signal,
-    }),
-  );
+  return requestJson<OutputTreeResponse>(`/api/jobs/${jobId}/outputs/tree`, {
+    signal,
+  });
 }
 
 export async function getJobEvalLines(
@@ -124,11 +118,9 @@ export async function getJobEvalLines(
   if (options.limit !== undefined) {
     params.set("limit", String(options.limit));
   }
-  return handleResponse<EvalLogResponse>(
-    await fetch(`/api/jobs/${jobId}/log/evals?${params.toString()}`, {
-      signal: options.signal,
-    }),
-  );
+  return requestJson<EvalLogResponse>(`/api/jobs/${jobId}/log/evals?${params.toString()}`, {
+    signal: options.signal,
+  });
 }
 
 export async function downloadOutputFile(jobId: string, path: string): Promise<void> {
@@ -136,13 +128,13 @@ export async function downloadOutputFile(jobId: string, path: string): Promise<v
 }
 
 export async function syncJob(jobId: string): Promise<{ message: string }> {
-  return handleResponse<{ message: string }>(await fetch(`/api/jobs/${jobId}/sync`, { method: "POST" }));
+  return requestJson<{ message: string }>(`/api/jobs/${jobId}/sync`, { method: "POST" });
 }
 
 export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
-  return handleResponse<CancelJobResponse>(await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" }));
+  return requestJson<CancelJobResponse>(`/api/jobs/${jobId}/cancel`, { method: "POST" });
 }
 
 export async function retryJob(jobId: string): Promise<{ job: { job_id: string }; message: string }> {
-  return handleResponse<{ job: { job_id: string }; message: string }>(await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" }));
+  return requestJson<{ job: { job_id: string }; message: string }>(`/api/jobs/${jobId}/retry`, { method: "POST" });
 }

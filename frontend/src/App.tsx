@@ -34,6 +34,16 @@ type PendingRequest = {
 
 const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
 
+function createEmptyJobLogCacheEntry(jobId: string): JobLogCacheEntry {
+  return {
+    job_id: jobId,
+    log: null,
+    eval_log: null,
+    log_updated_at: 0,
+    eval_updated_at: 0,
+  };
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -78,15 +88,7 @@ export default function App() {
 
   function updateJobLogCache(jobId: string, patch: Partial<JobLogCacheEntry>) {
     setJobLogCache((current) => {
-      const nextEntry: JobLogCacheEntry = current[jobId]
-        ? { ...current[jobId] }
-        : {
-            job_id: jobId,
-            log: null,
-            eval_log: null,
-            log_updated_at: 0,
-            eval_updated_at: 0,
-          };
+      const nextEntry: JobLogCacheEntry = current[jobId] ? { ...current[jobId] } : createEmptyJobLogCacheEntry(jobId);
       Object.assign(nextEntry, patch);
       nextEntry.job_id = jobId;
       return {
@@ -183,71 +185,80 @@ export default function App() {
     setPendingRequests((current) => current.filter((item) => item.id !== id));
   }
 
+  async function withPendingRequest<T>(label: string, detail: string, action: () => Promise<T>): Promise<T> {
+    const pendingId = beginPendingRequest(label, detail);
+    try {
+      return await action();
+    } finally {
+      finishPendingRequest(pendingId);
+    }
+  }
+
   async function handleRefreshJobs() {
-    const pendingId = beginPendingRequest("刷新任务", "已向后端发出刷新请求，等待远端任务扫描输出。");
     setIsRefreshingJobs(true);
     try {
-      const response = await refreshJobs();
-      setJobs(response.jobs);
+      await withPendingRequest("刷新任务", "已向后端发出刷新请求，等待远端任务扫描输出。", async () => {
+        const response = await refreshJobs();
+        setJobs(response.jobs);
+      });
     } finally {
       setIsRefreshingJobs(false);
-      finishPendingRequest(pendingId);
     }
   }
 
   async function handleSync(job: JobRecord) {
-    const pendingId = beginPendingRequest("同步结果", `任务 ${job.job_id} 正在发起从 ${job.account} 到主账户的同步。`);
     setSyncingJobIds((current) => Array.from(new Set([...current, job.job_id])));
     try {
-      await syncJob(job.job_id);
-      const response = await listJobs();
-      setJobs(response.jobs);
+      await withPendingRequest("同步结果", `任务 ${job.job_id} 正在发起从 ${job.account} 到主账户的同步。`, async () => {
+        await syncJob(job.job_id);
+        const response = await listJobs();
+        setJobs(response.jobs);
+      });
     } finally {
       setSyncingJobIds((current) => current.filter((item) => item !== job.job_id));
-      finishPendingRequest(pendingId);
     }
   }
 
   async function handleCancel(job: JobRecord) {
-    const pendingId = beginPendingRequest("取消任务", `任务 ${job.job_id} 正在请求取消，请等待 scancel 输出。`);
     setCancellingJobIds((current) => Array.from(new Set([...current, job.job_id])));
     try {
-      await cancelJob(job.job_id);
-      const response = await listJobs();
-      setJobs(response.jobs);
+      await withPendingRequest("取消任务", `任务 ${job.job_id} 正在请求取消，请等待 scancel 输出。`, async () => {
+        await cancelJob(job.job_id);
+        const response = await listJobs();
+        setJobs(response.jobs);
+      });
     } finally {
       setCancellingJobIds((current) => current.filter((item) => item !== job.job_id));
-      finishPendingRequest(pendingId);
     }
   }
 
   async function handleClearJobs() {
-    const pendingId = beginPendingRequest("清空任务", "正在清空本地任务记录列表。");
     setIsClearingJobs(true);
     try {
-      const response = await clearJobs();
-      setJobs(response.jobs);
-      setSelectedJob(null);
+      await withPendingRequest("清空任务", "正在清空本地任务记录列表。", async () => {
+        const response = await clearJobs();
+        setJobs(response.jobs);
+        setSelectedJob(null);
+      });
     } finally {
       setIsClearingJobs(false);
-      finishPendingRequest(pendingId);
     }
   }
 
   async function handleRetry(job: JobRecord) {
-    const pendingId = beginPendingRequest("续训任务", `任务 ${job.job_id} 已超时，正在以相同账户与脚本重新提交。`);
     setRetryingJobIds((current) => Array.from(new Set([...current, job.job_id])));
     try {
-      const response = await retryJob(job.job_id);
-      const nextJobs = await listJobs();
-      setJobs(nextJobs.jobs);
-      const nextSelected = nextJobs.jobs.find((item) => item.job_id === response.job.job_id) ?? null;
-      if (nextSelected) {
-        setSelectedJob(nextSelected);
-      }
+      await withPendingRequest("续训任务", `任务 ${job.job_id} 已超时，正在以相同账户与脚本重新提交。`, async () => {
+        const response = await retryJob(job.job_id);
+        const nextJobs = await listJobs();
+        setJobs(nextJobs.jobs);
+        const nextSelected = nextJobs.jobs.find((item) => item.job_id === response.job.job_id) ?? null;
+        if (nextSelected) {
+          setSelectedJob(nextSelected);
+        }
+      });
     } finally {
       setRetryingJobIds((current) => current.filter((item) => item !== job.job_id));
-      finishPendingRequest(pendingId);
     }
   }
 
@@ -295,6 +306,7 @@ export default function App() {
       ) : null}
       {activeTab === "jobs" ? (
         <JobsPage
+          mainUsername={config.main_username}
           jobs={jobs}
           selectedJob={selectedJob}
           selectedJobCache={selectedJob ? (jobLogCache[selectedJob.job_id] ?? null) : null}

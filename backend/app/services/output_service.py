@@ -26,24 +26,18 @@ class OutputService:
     def _repo_path(self, job) -> str:
         return self.job_service.config_service.load().repo_paths.get(job.account, "")
 
+    def _get_job_or_raise(self, job_id: str):
+        job = self.job_service.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        return job
+
     def _candidate_output_paths(self, job) -> list[str]:
         repo_path = self._repo_path(job)
         candidates: list[str] = []
-        if job.output_path_hint:
-            if job.output_path_hint.startswith("/"):
-                if "/output/sbatch/" not in job.output_path_hint:
-                    candidates.append(job.output_path_hint)
-            elif repo_path:
-                candidate_path = str(PurePosixPath(repo_path) / job.output_path_hint)
-                if "/output/sbatch/" not in candidate_path:
-                    candidates.append(candidate_path)
         if repo_path:
             candidates.append(str(PurePosixPath(repo_path) / "output" / job.experiment))
-        seen: list[str] = []
-        for candidate in candidates:
-            if candidate not in seen:
-                seen.append(candidate)
-        return seen
+        return list(dict.fromkeys(candidates))
 
     def _existing_output_root(self, username: str, candidate_path: str, repo_path: str) -> str | None:
         candidate = PurePosixPath(candidate_path)
@@ -65,9 +59,7 @@ class OutputService:
         return None
 
     def get_tree(self, job_id: str) -> OutputTreeResponse:
-        job = self.job_service.database.get_job(job_id)
-        if job is None:
-            raise SSHError(f"Unknown job id: {job_id}")
+        job = self._get_job_or_raise(job_id)
         repo_path = self._repo_path(job)
         for root_path in self._candidate_output_paths(job):
             existing_root = self._existing_output_root(job.account, root_path, repo_path)
@@ -76,13 +68,9 @@ class OutputService:
         raise SSHError(f"Output path is not available for job {job_id}")
 
     def get_file_content(self, job_id: str, path: str) -> str:
-        job = self.job_service.database.get_job(job_id)
-        if job is None:
-            raise SSHError(f"Unknown job id: {job_id}")
+        job = self._get_job_or_raise(job_id)
         return self.ssh_gateway.read_file(job.account, path)
 
     def get_file_bytes(self, job_id: str, path: str) -> bytes:
-        job = self.job_service.database.get_job(job_id)
-        if job is None:
-            raise SSHError(f"Unknown job id: {job_id}")
+        job = self._get_job_or_raise(job_id)
         return self.ssh_gateway.read_bytes(job.account, path)

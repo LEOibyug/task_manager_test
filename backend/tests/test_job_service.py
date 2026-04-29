@@ -85,7 +85,7 @@ class JobServiceTestCase(unittest.TestCase):
         )
         self.assertEqual(job.job_id, "12345")
         self.assertEqual(job.status, "PENDING")
-        self.assertEqual(job.output_path_hint, "output/exp001/model_config/runA")
+        self.assertEqual(job.output_path_hint, "output/exp001")
         self.assertEqual(job.log_path_template, "logs/train.out")
         self.assertEqual(job.preferred_gpu_node, "gpu1")
         self.assertIsNotNone(self.database.get_job("12345"))
@@ -227,8 +227,8 @@ class JobServiceTestCase(unittest.TestCase):
         gateway = InMemorySSHGateway(
             files={
                 "main": {
-                    "/srv/main/repo/logs/train.out": "done\n",
-                    "/srv/main/repo/output/exp001/model_config/runA/result.txt": "ok\n",
+                    "/srv/main/repo/output/sbatch/train.out": "done\n",
+                    "/srv/main/repo/output/exp001/result.txt": "ok\n",
                 }
             }
         )
@@ -241,7 +241,7 @@ class JobServiceTestCase(unittest.TestCase):
                 script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
                 status="COMPLETED",
                 log_path="/srv/worker1/repo/logs/train.out",
-                output_path_hint="output/exp001/model_config/runA",
+                output_path_hint="output/exp001",
             )
         )
         jobs = service.list_jobs().jobs
