@@ -17,18 +17,48 @@ set "FRONTEND_DIR=%ROOT_DIR%\frontend"
 set "BACKEND_DEPS_STAMP=%STATE_DIR%\backend_deps.stamp"
 set "FRONTEND_DEPS_STAMP=%STATE_DIR%\frontend_deps.stamp"
 set "FRONTEND_BUILD_STAMP=%STATE_DIR%\frontend_build.stamp"
+set "PYTHON_VERSION="
+set "PYTHON_MAJOR="
+set "PYTHON_MINOR="
+set "NODE_VERSION="
+set "NODE_MAJOR="
 
 echo [1/6] 检查环境依赖 (Python ^& Node.js)...
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+call :detect_python_version
 if errorlevel 1 (
-    echo [错误] 未找到 Python 或 Python 版本低于 3.11。请确保已安装 Python 3.11+ 并添加到 PATH。
+    echo [错误] 未找到 Python。请确保已安装 Python 3.11+ 并添加到 PATH。
+    pause
+    exit /b 1
+)
+if not defined PYTHON_MAJOR (
+    echo [错误] 无法解析 Python 版本。
+    pause
+    exit /b 1
+)
+if %PYTHON_MAJOR% LSS 3 (
+    echo [错误] Python 版本过低：%PYTHON_VERSION%。请安装 Python 3.11+。
+    pause
+    exit /b 1
+)
+if %PYTHON_MAJOR% EQU 3 if %PYTHON_MINOR% LSS 11 (
+    echo [错误] Python 版本过低：%PYTHON_VERSION%。请安装 Python 3.11+。
     pause
     exit /b 1
 )
 
-node -e "const major = Number(process.versions.node.split('.')[0]); process.exit(major >= 18 ? 0 : 1)" >nul 2>&1
+call :detect_node_version
 if errorlevel 1 (
-    echo [错误] 未找到 Node.js 或 Node.js 版本低于 18。请确保已安装 Node.js 18+ 并添加到 PATH。
+    echo [错误] 未找到 Node.js。请确保已安装 Node.js 18+ 并添加到 PATH。
+    pause
+    exit /b 1
+)
+if not defined NODE_MAJOR (
+    echo [错误] 无法解析 Node.js 版本。
+    pause
+    exit /b 1
+)
+if %NODE_MAJOR% LSS 18 (
+    echo [错误] Node.js 版本过低：%NODE_VERSION%。请安装 Node.js 18+。
     pause
     exit /b 1
 )
@@ -217,3 +247,24 @@ if "%REMOTE_SHA%"=="%BASE_SHA%" (
 
 echo [run_local.bat] 本地与远端分支已分叉，跳过自动 pull。
 goto :eof
+
+:detect_python_version
+set "PYTHON_VERSION="
+set "PYTHON_MAJOR="
+set "PYTHON_MINOR="
+for /f "tokens=2 delims= " %%i in ('python --version 2^>^&1') do set "PYTHON_VERSION=%%i"
+if not defined PYTHON_VERSION exit /b 1
+for /f "tokens=1,2 delims=." %%i in ("%PYTHON_VERSION%") do (
+    set "PYTHON_MAJOR=%%i"
+    set "PYTHON_MINOR=%%j"
+)
+exit /b 0
+
+:detect_node_version
+set "NODE_VERSION="
+set "NODE_MAJOR="
+for /f "delims=" %%i in ('node --version 2^>nul') do set "NODE_VERSION=%%i"
+if not defined NODE_VERSION exit /b 1
+if /i "%NODE_VERSION:~0,1%"=="v" set "NODE_VERSION=%NODE_VERSION:~1%"
+for /f "tokens=1 delims=." %%i in ("%NODE_VERSION%") do set "NODE_MAJOR=%%i"
+exit /b 0
