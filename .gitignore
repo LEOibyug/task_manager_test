@@ -27,3 +27,4 @@ local.db
 app.db
 ~/.exp-queue-manager/
 test.id
+.run_local/
