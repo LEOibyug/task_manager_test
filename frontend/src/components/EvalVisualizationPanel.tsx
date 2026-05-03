@@ -78,9 +78,13 @@ function buildChartScale(values: number[]): ChartScale {
     const spread = Math.max(Math.abs(minValue) * 0.1, 1);
     minValue -= spread;
     maxValue += spread;
+  } else {
+    const spread = (maxValue - minValue) * 0.08;
+    minValue -= spread;
+    maxValue += spread;
   }
   const step = niceStep((maxValue - minValue) / 4);
-  const min = rawMinValue >= 0 ? 0 : Math.floor(minValue / step) * step;
+  const min = Math.floor(minValue / step) * step;
   const max = Math.ceil(maxValue / step) * step;
   const ticks: number[] = [];
   for (let value = min; value <= max + step * 0.5; value += step) {
@@ -114,8 +118,6 @@ function CombinedEvalChart({ series, totalEvalCount }: { series: EvalMetricSerie
   const values = series.flatMap((item) => item.points.map((point) => point.value));
   const scale = buildChartScale(values);
   const xTicks = Array.from({ length: totalEvalCount }, (_, index) => index + 1);
-  const hoveredX = hoverEvalIndex ? getPointX(hoverEvalIndex, totalEvalCount) : null;
-  const tooltipLeft = hoveredX ? Math.min(88, Math.max(12, (hoveredX / CHART_WIDTH) * 100)) : 50;
   const hoveredEntries =
     hoverEvalIndex === null
       ? []
@@ -271,7 +273,7 @@ function CombinedEvalChart({ series, totalEvalCount }: { series: EvalMetricSerie
           />
         </svg>
         {hoverEvalIndex && hoveredEntries.length > 0 ? (
-          <div className="eval-line-chart__tooltip" style={{ left: `${tooltipLeft}%` }}>
+          <div className="eval-line-chart__tooltip">
             <strong>评估 #{hoverEvalIndex}</strong>
             {hoveredEntries.map((entry) => {
               const trainingLabel =

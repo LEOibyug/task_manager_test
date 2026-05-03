@@ -7,6 +7,7 @@ export interface AppConfig {
   sub_usernames: string[];
   repo_paths: Record<string, string>;
   refresh_interval: number;
+  auto_retry_enabled: boolean;
 }
 
 export interface ExperimentSummary {

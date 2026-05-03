@@ -17,6 +17,7 @@ class AppConfig(BaseModel):
     sub_usernames: list[str] = Field(default_factory=list)
     repo_paths: dict[str, str] = Field(default_factory=dict)
     refresh_interval: int = 10
+    auto_retry_enabled: bool = False
 
 
 class ConnectionCheckRequest(BaseModel):

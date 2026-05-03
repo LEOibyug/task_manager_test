@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, syncJob } from "./api";
+import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, saveConfig, syncJob } from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
@@ -24,6 +24,7 @@ const emptyConfig: AppConfig = {
   sub_usernames: [],
   repo_paths: {},
   refresh_interval: 10,
+  auto_retry_enabled: false,
 };
 
 type TabId = "config" | "experiments" | "jobs";
@@ -34,7 +35,6 @@ type PendingRequest = {
 };
 
 const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
-const AUTO_RETRY_STORAGE_KEY = "exp-queue-manager:auto-retry-enabled";
 
 function isTimeoutJob(job: JobRecord): boolean {
   return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
@@ -67,9 +67,7 @@ export default function App() {
   const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
   const [deletingJobIds, setDeletingJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
-  const [autoRetryEnabled, setAutoRetryEnabled] = useState(() => {
-    return window.localStorage.getItem(AUTO_RETRY_STORAGE_KEY) === "true";
-  });
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(false);
   const autoRetryAttemptedJobIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -82,13 +80,14 @@ export default function App() {
   }, [jobs]);
 
   useEffect(() => {
-    getConfig().then(setConfig).catch(() => undefined);
+    getConfig()
+      .then((savedConfig) => {
+        setConfig(savedConfig);
+        setAutoRetryEnabled(savedConfig.auto_retry_enabled);
+      })
+      .catch(() => undefined);
     listJobs().then((response) => setJobs(response.jobs)).catch(() => undefined);
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(AUTO_RETRY_STORAGE_KEY, String(autoRetryEnabled));
-  }, [autoRetryEnabled]);
 
   useEffect(() => {
     if (!autoRetryEnabled) {
@@ -129,6 +128,11 @@ export default function App() {
         [jobId]: nextEntry,
       };
     });
+  }
+
+  function handleConfigChange(nextConfig: AppConfig) {
+    setConfig(nextConfig);
+    setAutoRetryEnabled(nextConfig.auto_retry_enabled);
   }
 
   function applyJobLogStreamUpdate(
@@ -321,6 +325,27 @@ export default function App() {
     }
   }
 
+  async function handleAutoRetryChange(enabled: boolean) {
+    const previousConfig = config;
+    const previousEnabled = autoRetryEnabled;
+    const nextConfig = {
+      ...config,
+      auto_retry_enabled: enabled,
+    };
+    setAutoRetryEnabled(enabled);
+    setConfig(nextConfig);
+    try {
+      const saved = await saveConfig(nextConfig);
+      setConfig(saved);
+      setAutoRetryEnabled(saved.auto_retry_enabled);
+      setBanner(enabled ? "自动续训已开启，并已写入配置。" : "自动续训已关闭，并已写入配置。");
+    } catch (error) {
+      setConfig(previousConfig);
+      setAutoRetryEnabled(previousEnabled);
+      setBanner(`保存自动续训配置失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -349,7 +374,7 @@ export default function App() {
       {activeTab === "config" ? (
         <ConfigurationPage
           config={config}
-          onConfigChange={setConfig}
+          onConfigChange={handleConfigChange}
           onOperationStart={beginPendingRequest}
           onOperationEnd={finishPendingRequest}
         />
@@ -378,7 +403,7 @@ export default function App() {
           onRetry={handleRetry}
           onDelete={handleDeleteJob}
           autoRetryEnabled={autoRetryEnabled}
-          onAutoRetryChange={setAutoRetryEnabled}
+          onAutoRetryChange={handleAutoRetryChange}
           isRefreshing={isRefreshingJobs}
           isClearing={isClearingJobs}
           syncingJobIds={syncingJobIds}
