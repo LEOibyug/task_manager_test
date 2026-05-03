@@ -260,6 +260,13 @@ select {
   accent-color: #5da2ff;
 }
 
+.compact-switch-control {
+  min-height: 1.75rem;
+  padding: 0.18rem 0.5rem 0.18rem 0.28rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
 .job-category-tabs {
   display: flex;
   flex-wrap: wrap;

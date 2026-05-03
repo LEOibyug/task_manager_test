@@ -13,10 +13,12 @@ interface JobTableProps {
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
   onDelete: (job: JobRecord) => void;
+  onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   syncingJobIds: string[];
   cancellingJobIds: string[];
   retryingJobIds: string[];
   deletingJobIds: string[];
+  updatingAutoRetryJobIds: string[];
 }
 
 export function JobTable({
@@ -28,10 +30,12 @@ export function JobTable({
   onCancel,
   onRetry,
   onDelete,
+  onAutoRetryChange,
   syncingJobIds,
   cancellingJobIds,
   retryingJobIds,
   deletingJobIds,
+  updatingAutoRetryJobIds,
 }: JobTableProps) {
   function isTimeoutJob(job: JobRecord) {
     return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
@@ -52,6 +56,7 @@ export function JobTable({
             <th>运行时长</th>
             <th>节点</th>
             <th>时限</th>
+            <th>自动续训</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -62,7 +67,7 @@ export function JobTable({
               <Fragment key={group.chainId}>
                 {group.isChain ? (
                   <tr className="job-chain-header">
-                    <td colSpan={9}>
+                    <td colSpan={10}>
                       <div className="job-chain-summary">
                         <span>续训链 {group.chainId}</span>
                         <span>共 {group.jobs.length} 次</span>
@@ -76,6 +81,7 @@ export function JobTable({
             const isCancelling = cancellingJobIds.includes(job.job_id);
             const isRetrying = retryingJobIds.includes(job.job_id);
             const isDeleting = deletingJobIds.includes(job.job_id);
+            const isUpdatingAutoRetry = updatingAutoRetryJobIds.includes(job.job_id);
             const isMainAccountJob = job.account === mainUsername;
             const canRetry = isTimeoutJob(job) && group.summaryJob.job_id === job.job_id;
             const showRetry = canRetry || isRetrying;
@@ -118,6 +124,21 @@ export function JobTable({
                 {!job.preferred_gpu_node && job.nodes.length === 0 ? "-" : null}
               </td>
               <td>{job.max_runtime_hours}h</td>
+              <td>
+                <label className="switch-control compact-switch-control" title="开启后，该任务超时会自动续训；自动产生的后继任务会继承此设置。">
+                  <input
+                    type="checkbox"
+                    checked={job.auto_retry_enabled}
+                    disabled={isSyncing || isCancelling || isRetrying || isDeleting || isUpdatingAutoRetry}
+                    onChange={(event) => {
+                      event.stopPropagation();
+                      onAutoRetryChange(job, event.target.checked);
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                  <span>{isUpdatingAutoRetry ? "保存中" : job.auto_retry_enabled ? "开启" : "关闭"}</span>
+                </label>
+              </td>
               <td>
                 <div className="table-actions">
                   {showRetry ? (

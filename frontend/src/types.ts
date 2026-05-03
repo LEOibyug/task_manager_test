@@ -7,7 +7,6 @@ export interface AppConfig {
   sub_usernames: string[];
   repo_paths: Record<string, string>;
   refresh_interval: number;
-  auto_retry_enabled: boolean;
 }
 
 export interface ExperimentSummary {
@@ -46,6 +45,7 @@ export interface JobRecord {
   last_error: string | null;
   resumed_from_job_id: string | null;
   continuation_root_job_id: string | null;
+  auto_retry_enabled: boolean;
 }
 
 export interface JobsResponse {

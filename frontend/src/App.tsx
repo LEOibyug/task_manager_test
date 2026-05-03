@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, saveConfig, syncJob } from "./api";
+import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, setJobAutoRetry, syncJob } from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
@@ -24,7 +24,6 @@ const emptyConfig: AppConfig = {
   sub_usernames: [],
   repo_paths: {},
   refresh_interval: 10,
-  auto_retry_enabled: false,
 };
 
 type TabId = "config" | "experiments" | "jobs";
@@ -66,8 +65,8 @@ export default function App() {
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
   const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
   const [deletingJobIds, setDeletingJobIds] = useState<string[]>([]);
+  const [updatingAutoRetryJobIds, setUpdatingAutoRetryJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
-  const [autoRetryEnabled, setAutoRetryEnabled] = useState(false);
   const autoRetryAttemptedJobIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -80,23 +79,20 @@ export default function App() {
   }, [jobs]);
 
   useEffect(() => {
-    getConfig()
-      .then((savedConfig) => {
-        setConfig(savedConfig);
-        setAutoRetryEnabled(savedConfig.auto_retry_enabled);
-      })
-      .catch(() => undefined);
+    getConfig().then(setConfig).catch(() => undefined);
     listJobs().then((response) => setJobs(response.jobs)).catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    if (!autoRetryEnabled) {
-      return;
-    }
-
     for (const group of buildJobChainGroups(jobs)) {
       const latestJob = group.summaryJob;
+      if (!latestJob.auto_retry_enabled) {
+        continue;
+      }
       if (!isTimeoutJob(latestJob)) {
+        continue;
+      }
+      if (updatingAutoRetryJobIds.includes(latestJob.job_id)) {
         continue;
       }
       if (retryingJobIds.includes(latestJob.job_id) || autoRetryAttemptedJobIds.current.has(latestJob.job_id)) {
@@ -105,7 +101,7 @@ export default function App() {
       autoRetryAttemptedJobIds.current.add(latestJob.job_id);
       void handleRetry(latestJob, { automatic: true });
     }
-  }, [autoRetryEnabled, jobs, retryingJobIds]);
+  }, [jobs, retryingJobIds, updatingAutoRetryJobIds]);
 
   useEffect(() => {
     const cacheableJobIds = new Set(
@@ -132,7 +128,6 @@ export default function App() {
 
   function handleConfigChange(nextConfig: AppConfig) {
     setConfig(nextConfig);
-    setAutoRetryEnabled(nextConfig.auto_retry_enabled);
   }
 
   function applyJobLogStreamUpdate(
@@ -325,24 +320,24 @@ export default function App() {
     }
   }
 
-  async function handleAutoRetryChange(enabled: boolean) {
-    const previousConfig = config;
-    const previousEnabled = autoRetryEnabled;
-    const nextConfig = {
-      ...config,
-      auto_retry_enabled: enabled,
-    };
-    setAutoRetryEnabled(enabled);
-    setConfig(nextConfig);
+  async function handleJobAutoRetryChange(job: JobRecord, enabled: boolean) {
+    setUpdatingAutoRetryJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    const previousJobs = jobs;
+    setJobs((current) =>
+      current.map((item) => (item.job_id === job.job_id ? { ...item, auto_retry_enabled: enabled } : item)),
+    );
     try {
-      const saved = await saveConfig(nextConfig);
-      setConfig(saved);
-      setAutoRetryEnabled(saved.auto_retry_enabled);
-      setBanner(enabled ? "自动续训已开启，并已写入配置。" : "自动续训已关闭，并已写入配置。");
+      const response = await setJobAutoRetry(job.job_id, enabled);
+      if (enabled) {
+        autoRetryAttemptedJobIds.current.delete(job.job_id);
+      }
+      setJobs(response.jobs);
+      setBanner(`任务 ${job.job_id} 的自动续训已${enabled ? "开启" : "关闭"}。`);
     } catch (error) {
-      setConfig(previousConfig);
-      setAutoRetryEnabled(previousEnabled);
+      setJobs(previousJobs);
       setBanner(`保存自动续训配置失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setUpdatingAutoRetryJobIds((current) => current.filter((item) => item !== job.job_id));
     }
   }
 
@@ -402,14 +397,14 @@ export default function App() {
           onCancel={handleCancel}
           onRetry={handleRetry}
           onDelete={handleDeleteJob}
-          autoRetryEnabled={autoRetryEnabled}
-          onAutoRetryChange={handleAutoRetryChange}
+          onAutoRetryChange={handleJobAutoRetryChange}
           isRefreshing={isRefreshingJobs}
           isClearing={isClearingJobs}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
           deletingJobIds={deletingJobIds}
+          updatingAutoRetryJobIds={updatingAutoRetryJobIds}
         />
       ) : null}
       <OperationConsole

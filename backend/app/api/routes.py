@@ -18,6 +18,7 @@ from app.schemas import (
     ConnectionCheckResponse,
     ConnectionCheckResult,
     EvalLogResponse,
+    JobAutoRetryUpdateRequest,
     LogResponse,
     OutputTreeResponse,
     RefreshJobsResponse,
@@ -199,6 +200,36 @@ async def retry_job(job_id: str, container: AppContainer = Depends(get_container
         job = await run_in_threadpool(container.job_service.retry_job, job_id, logger)
         logger({"stage": "operation_end", "message": f"续训任务 {job.job_id} 已提交到 {job.account}"})
         return SubmitJobResponse(job=job, message=f"续训任务 {job.job_id} 已提交到 {job.account}（操作 {operation_id}）")
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/jobs/{job_id}/auto-retry", response_model=RefreshJobsResponse)
+async def update_job_auto_retry(
+    job_id: str,
+    request: JobAutoRetryUpdateRequest,
+    container: AppContainer = Depends(get_container),
+) -> RefreshJobsResponse:
+    loop = asyncio.get_running_loop()
+    _, logger = build_command_logger(container, loop, "job-auto-retry")
+    logger(
+        {
+            "stage": "operation_start",
+            "message": f"正在{'开启' if request.auto_retry_enabled else '关闭'}任务 {job_id} 的自动续训",
+        }
+    )
+    try:
+        result = await run_in_threadpool(
+            container.job_service.set_job_auto_retry,
+            job_id,
+            request.auto_retry_enabled,
+        )
+        logger({"stage": "operation_end", "message": f"任务 {job_id} 的自动续训配置已保存"})
+        await container.broadcaster.broadcast(
+            container.scheduler.build_jobs_refreshed_event(result.jobs)
+        )
+        return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
     except SSHError as exc:
         logger({"stage": "operation_error", "message": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -168,14 +168,6 @@ export function ConfigurationPage({ config, onConfigChange, onOperationStart, on
             onChange={(event) => setDraft({ ...draft, refresh_interval: Number(event.target.value) })}
           />
         </label>
-        <label className="switch-control">
-          <input
-            type="checkbox"
-            checked={draft.auto_retry_enabled}
-            onChange={(event) => setDraft({ ...draft, auto_retry_enabled: event.target.checked })}
-          />
-          <span>自动续训</span>
-        </label>
       </div>
       <label className="full-width">
         分账户

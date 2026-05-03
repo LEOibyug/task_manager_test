@@ -81,6 +81,7 @@ class JobServiceTestCase(unittest.TestCase):
                 script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
                 account="worker1",
                 preferred_gpu_node="gpu1",
+                auto_retry_enabled=True,
             )
         )
         self.assertEqual(job.job_id, "12345")
@@ -88,6 +89,7 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(job.output_path_hint, "output/exp001")
         self.assertEqual(job.log_path_template, "logs/train.out")
         self.assertEqual(job.preferred_gpu_node, "gpu1")
+        self.assertTrue(job.auto_retry_enabled)
         self.assertIsNotNone(self.database.get_job("12345"))
 
     def test_submit_job_to_main_account_skips_git_pull(self) -> None:
@@ -509,6 +511,7 @@ class JobServiceTestCase(unittest.TestCase):
                 preferred_gpu_node="gpu1",
                 status="TIMEOUT",
                 last_error="TIMEOUT",
+                auto_retry_enabled=True,
             )
         )
 
@@ -518,8 +521,27 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(new_job.resumed_from_job_id, "60001")
         self.assertEqual(new_job.continuation_root_job_id, "60001")
         self.assertEqual(new_job.preferred_gpu_node, "gpu1")
+        self.assertTrue(new_job.auto_retry_enabled)
         original_job = self.database.get_job("60001")
         self.assertEqual(original_job.continuation_root_job_id, "60001")
+
+    def test_set_job_auto_retry_updates_existing_job(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="60010",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="PENDING",
+            )
+        )
+
+        result = service.set_job_auto_retry("60010", True)
+
+        self.assertTrue(self.database.get_job("60010").auto_retry_enabled)
+        self.assertTrue(next(job for job in result.jobs if job.job_id == "60010").auto_retry_enabled)
 
     def test_refresh_jobs_marks_timeout_as_timeout_status(self) -> None:
         commands = {

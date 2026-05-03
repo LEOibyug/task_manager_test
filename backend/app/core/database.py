@@ -47,7 +47,8 @@ class Database:
                     synced INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
                     resumed_from_job_id TEXT,
-                    continuation_root_job_id TEXT
+                    continuation_root_job_id TEXT,
+                    auto_retry_enabled INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -72,6 +73,7 @@ class Database:
             "preferred_gpu_node": "TEXT",
             "resumed_from_job_id": "TEXT",
             "continuation_root_job_id": "TEXT",
+            "auto_retry_enabled": "INTEGER NOT NULL DEFAULT 0",
         }
         for column_name, column_type in expected_columns.items():
             if column_name not in existing_columns:
@@ -98,6 +100,7 @@ class Database:
         nodes = self._row_value(row, "nodes")
         synced = self._row_value(row, "synced")
         max_runtime_hours = self._row_value(row, "max_runtime_hours")
+        auto_retry_enabled = self._row_value(row, "auto_retry_enabled")
         return JobRecord(
             job_id=str(row["job_id"]),
             account=str(row["account"]),
@@ -118,6 +121,7 @@ class Database:
             last_error=self._row_value(row, "last_error"),
             resumed_from_job_id=self._row_value(row, "resumed_from_job_id"),
             continuation_root_job_id=self._row_value(row, "continuation_root_job_id"),
+            auto_retry_enabled=bool(auto_retry_enabled) if auto_retry_enabled is not None else False,
         )
 
     def upsert_job(self, job: JobRecord) -> None:
@@ -127,8 +131,8 @@ class Database:
                 INSERT INTO jobs (
                     job_id, account, experiment, script_path, preferred_gpu_node, status, start_time, runtime, nodes,
                     resource_usage, max_runtime_hours, log_path, log_path_template, job_name, output_path_hint, synced, last_error,
-                    resumed_from_job_id, continuation_root_job_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resumed_from_job_id, continuation_root_job_id, auto_retry_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     account=excluded.account,
                     experiment=excluded.experiment,
@@ -147,7 +151,8 @@ class Database:
                     synced=excluded.synced,
                     last_error=excluded.last_error,
                     resumed_from_job_id=excluded.resumed_from_job_id,
-                    continuation_root_job_id=excluded.continuation_root_job_id
+                    continuation_root_job_id=excluded.continuation_root_job_id,
+                    auto_retry_enabled=excluded.auto_retry_enabled
                 """,
                 (
                     job.job_id,
@@ -169,6 +174,7 @@ class Database:
                     job.last_error,
                     job.resumed_from_job_id,
                     job.continuation_root_job_id,
+                    int(job.auto_retry_enabled),
                 ),
             )
 
@@ -194,6 +200,13 @@ class Database:
                 ON CONFLICT(job_id) DO UPDATE SET synced_at = excluded.synced_at
                 """,
                 (job_id, timestamp),
+            )
+
+    def set_job_auto_retry(self, job_id: str, enabled: bool) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET auto_retry_enabled = ? WHERE job_id = ?",
+                (int(enabled), job_id),
             )
 
     def delete_job(self, job_id: str) -> None:

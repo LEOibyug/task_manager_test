@@ -70,11 +70,20 @@ export async function deleteJob(jobId: string): Promise<JobsResponse> {
   return requestJson<JobsResponse>(`/api/jobs/${jobId}`, { method: "DELETE" });
 }
 
+export async function setJobAutoRetry(jobId: string, enabled: boolean): Promise<JobsResponse> {
+  return requestJson<JobsResponse>(`/api/jobs/${jobId}/auto-retry`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ auto_retry_enabled: enabled }),
+  });
+}
+
 export async function submitJob(payload: {
   experiment_name: string;
   script_path: string;
   account: string;
   preferred_gpu_node: "gpu1" | "gpu2" | "gpu3" | null;
+  auto_retry_enabled: boolean;
 }): Promise<{ message: string }> {
   return requestJson<{ message: string }>("/api/jobs/submit", {
     method: "POST",

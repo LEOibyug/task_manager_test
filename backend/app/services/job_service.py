@@ -183,6 +183,8 @@ class JobService:
             merged.resumed_from_job_id = current_job.resumed_from_job_id
         if merged.continuation_root_job_id is None and current_job.continuation_root_job_id is not None:
             merged.continuation_root_job_id = current_job.continuation_root_job_id
+        if current_job.auto_retry_enabled:
+            merged.auto_retry_enabled = current_job.auto_retry_enabled
 
         return merged
 
@@ -430,6 +432,7 @@ class JobService:
             )
             if resumed_from_job
             else None,
+            auto_retry_enabled=resumed_from_job.auto_retry_enabled if resumed_from_job else request.auto_retry_enabled,
         )
         self.database.upsert_job(job)
         job.synced = self._resolve_sync_state(config, job)
@@ -449,8 +452,17 @@ class JobService:
             script_path=job.script_path,
             account=job.account,
             preferred_gpu_node=job.preferred_gpu_node or (job.nodes[0] if job.nodes else None),
+            auto_retry_enabled=job.auto_retry_enabled,
         )
         return self.submit_job(retry_request, logger=logger, resumed_from_job=job)
+
+    def set_job_auto_retry(self, job_id: str, enabled: bool) -> JobListResponse:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        job.auto_retry_enabled = enabled
+        self.database.upsert_job(job)
+        return self.list_jobs()
 
     def list_jobs(self) -> JobListResponse:
         return JobListResponse(jobs=self._apply_sync_state(self.database.list_jobs()), refreshed_at=datetime.now(UTC))

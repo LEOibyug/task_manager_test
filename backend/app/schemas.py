@@ -17,7 +17,6 @@ class AppConfig(BaseModel):
     sub_usernames: list[str] = Field(default_factory=list)
     repo_paths: dict[str, str] = Field(default_factory=dict)
     refresh_interval: int = 10
-    auto_retry_enabled: bool = False
 
 
 class ConnectionCheckRequest(BaseModel):
@@ -72,6 +71,7 @@ class JobRecord(BaseModel):
     last_error: str | None = None
     resumed_from_job_id: str | None = None
     continuation_root_job_id: str | None = None
+    auto_retry_enabled: bool = False
 
 
 class JobListResponse(BaseModel):
@@ -84,6 +84,11 @@ class SubmitJobRequest(BaseModel):
     script_path: str
     account: str
     preferred_gpu_node: GpuNode | None = None
+    auto_retry_enabled: bool = False
+
+
+class JobAutoRetryUpdateRequest(BaseModel):
+    auto_retry_enabled: bool
 
 
 class SubmitJobResponse(BaseModel):

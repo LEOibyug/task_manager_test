@@ -36,14 +36,14 @@ interface JobsPageProps {
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
   onDelete: (job: JobRecord) => void;
-  autoRetryEnabled: boolean;
-  onAutoRetryChange: (enabled: boolean) => void;
+  onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   isRefreshing: boolean;
   isClearing: boolean;
   syncingJobIds: string[];
   cancellingJobIds: string[];
   retryingJobIds: string[];
   deletingJobIds: string[];
+  updatingAutoRetryJobIds: string[];
 }
 
 export function JobsPage({
@@ -59,7 +59,6 @@ export function JobsPage({
   onCancel,
   onRetry,
   onDelete,
-  autoRetryEnabled,
   onAutoRetryChange,
   isRefreshing,
   isClearing,
@@ -67,6 +66,7 @@ export function JobsPage({
   cancellingJobIds,
   retryingJobIds,
   deletingJobIds,
+  updatingAutoRetryJobIds,
 }: JobsPageProps) {
   const [category, setCategory] = useState<JobCategory>("ALL");
   const categoryCounts = useMemo(() => {
@@ -103,14 +103,6 @@ export function JobsPage({
         title="全局任务面板"
         actions={
           <div className="inline-controls">
-            <label className="switch-control">
-              <input
-                type="checkbox"
-                checked={autoRetryEnabled}
-                onChange={(event) => onAutoRetryChange(event.target.checked)}
-              />
-              <span>自动续训</span>
-            </label>
             <button className="ghost-button" onClick={() => void onRefresh()} disabled={isRefreshing || isClearing}>
               {isRefreshing ? "刷新中..." : "立即刷新"}
             </button>
@@ -141,10 +133,12 @@ export function JobsPage({
           onCancel={onCancel}
           onRetry={onRetry}
           onDelete={onDelete}
+          onAutoRetryChange={onAutoRetryChange}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
           deletingJobIds={deletingJobIds}
+          updatingAutoRetryJobIds={updatingAutoRetryJobIds}
         />
       </SectionCard>
       <div className="jobs-detail-grid">
