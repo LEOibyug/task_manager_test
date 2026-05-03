@@ -11,11 +11,16 @@ export interface EvalCardItem {
   rawLine: string;
   prefix: string | null;
   metrics: EvalMetric[];
+  trainingIndex?: number;
+  trainingTotal?: number;
 }
 
 const EVAL_PATTERN = /^(?<prefix>.*?)(?:\s+)?latest_eval=(?<metrics>.+)$/;
 
-export function parseEvalLogEntries(entries: EvalLogEntry[]): EvalCardItem[] {
+export function parseEvalLogEntries(
+  entries: EvalLogEntry[],
+  options: { trainingIndex?: number; trainingTotal?: number; idPrefix?: string } = {},
+): EvalCardItem[] {
   return entries
     .map((entry, index) => {
       const trimmed = entry.content.trim();
@@ -35,13 +40,14 @@ export function parseEvalLogEntries(entries: EvalLogEntry[]): EvalCardItem[] {
         .filter((metric) => metric.key && metric.value);
 
       return {
-        id: `${entry.line_number ?? "no-line"}-${index}`,
+        id: `${options.idPrefix ?? "eval"}-${entry.line_number ?? "no-line"}-${index}`,
         lineNumber: entry.line_number,
         rawLine: trimmed,
         prefix: match?.groups?.prefix?.trim() || null,
         metrics,
+        trainingIndex: options.trainingIndex,
+        trainingTotal: options.trainingTotal,
       };
     })
-    .filter((item) => item.metrics.length > 0)
-    .reverse();
+    .filter((item) => item.metrics.length > 0);
 }

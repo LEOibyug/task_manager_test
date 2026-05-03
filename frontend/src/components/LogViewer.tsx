@@ -1,28 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getJobEvalLines, getJobLog } from "../api";
+import { getJobEvalLines, getJobEvalLinesBatch, getJobLog } from "../api";
 import type { EvalLogResponse, JobLogCacheEntry, JobRecord, LogResponse } from "../types";
 import { SectionCard } from "./SectionCard";
 import { renderTerminalText } from "../utils/terminal";
-import { parseEvalLogEntries } from "../utils/evalMetrics";
+import { type EvalCardItem, parseEvalLogEntries } from "../utils/evalMetrics";
 import { extractProgressFromLog } from "../utils/logProgress";
+import { getJobChainMembers } from "../utils/jobChain";
 
 const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
 const LOG_POLL_INTERVAL_MS = 1500;
 const EVAL_POLL_INTERVAL_MS = 8000;
 const NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN");
 
+function dedupeEvalCardsByContent(cards: EvalCardItem[]): EvalCardItem[] {
+  const deduped = new Map<string, EvalCardItem>();
+  for (const card of cards) {
+    deduped.delete(card.rawLine);
+    deduped.set(card.rawLine, card);
+  }
+  return Array.from(deduped.values());
+}
+
 export function LogViewer({
   job,
+  jobs,
   cacheEntry,
   onCacheUpdate,
 }: {
   job: JobRecord | null;
+  jobs: JobRecord[];
   cacheEntry: JobLogCacheEntry | null;
   onCacheUpdate: (jobId: string, patch: Partial<JobLogCacheEntry>) => void;
 }) {
   const [log, setLog] = useState<LogResponse | null>(null);
   const [evalLog, setEvalLog] = useState<EvalLogResponse | null>(null);
+  const [chainEvalLogs, setChainEvalLogs] = useState<
+    Array<{ jobId: string; trainingIndex: number; trainingTotal: number; response: EvalLogResponse }>
+  >([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [evalError, setEvalError] = useState<string | null>(null);
@@ -40,6 +55,14 @@ export function LogViewer({
   const isTrackable = job ? TRACKABLE_JOB_STATUSES.has(job.status) : false;
   const activeJobId = job?.job_id ?? null;
   const isPreviewLog = log?.view === "preview";
+  const evalJobs = useMemo(() => {
+    if (!job) {
+      return [];
+    }
+    const chainMembers = getJobChainMembers(jobs, job).reverse();
+    return chainMembers.length > 0 ? chainMembers : [job];
+  }, [jobs, job]);
+  const evalJobIds = useMemo(() => evalJobs.map((item) => item.job_id).join("|"), [evalJobs]);
 
   useEffect(() => {
     requestControllerRef.current?.abort();
@@ -51,6 +74,7 @@ export function LogViewer({
     if (!job) {
       setLog(null);
       setEvalLog(null);
+      setChainEvalLogs([]);
       setError(null);
       setEvalError(null);
       appliedLogCacheAtRef.current = 0;
@@ -61,12 +85,13 @@ export function LogViewer({
     setIsLogExpanded(false);
     setLog(cacheEntry?.log ?? null);
     setEvalLog(cacheEntry?.eval_log ?? null);
+    setChainEvalLogs([]);
     appliedLogCacheAtRef.current = cacheEntry?.log_updated_at ?? 0;
     appliedEvalCacheAtRef.current = cacheEntry?.eval_updated_at ?? 0;
     if (!cacheEntry?.log) {
       void refreshLog(true, true, "preview");
     }
-    if (!cacheEntry?.eval_log) {
+    if (evalJobs.length > 1 || !cacheEntry?.eval_log) {
       void refreshEvalLog(true);
     }
     return () => {
@@ -77,7 +102,7 @@ export function LogViewer({
       isRequestInFlightRef.current = false;
       isEvalRequestInFlightRef.current = false;
     };
-  }, [activeJobId]);
+  }, [activeJobId, evalJobIds]);
 
   useEffect(() => {
     if (!cacheEntry || cacheEntry.job_id !== activeJobId) {
@@ -87,11 +112,11 @@ export function LogViewer({
       setLog(cacheEntry.log);
       appliedLogCacheAtRef.current = cacheEntry.log_updated_at;
     }
-    if (cacheEntry.eval_log && cacheEntry.eval_updated_at >= appliedEvalCacheAtRef.current) {
+    if (evalJobs.length === 1 && cacheEntry.eval_log && cacheEntry.eval_updated_at >= appliedEvalCacheAtRef.current) {
       setEvalLog(cacheEntry.eval_log);
       appliedEvalCacheAtRef.current = cacheEntry.eval_updated_at;
     }
-  }, [cacheEntry, activeJobId, isLogExpanded, search]);
+  }, [cacheEntry, activeJobId, isLogExpanded, search, evalJobs.length]);
 
   useEffect(() => {
     if (!job || !isTrackable || !isTracking || search.trim()) {
@@ -110,14 +135,14 @@ export function LogViewer({
     if (!job || !isTrackable || !isTracking) {
       return;
     }
-    if (cacheEntry?.eval_log) {
+    if (evalJobs.length === 1 && cacheEntry?.eval_log) {
       return;
     }
     const timer = window.setInterval(() => {
       void refreshEvalLog(true);
     }, EVAL_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [activeJobId, isTrackable, isTracking, cacheEntry]);
+  }, [activeJobId, evalJobIds, isTrackable, isTracking, cacheEntry, evalJobs.length]);
 
   useEffect(() => {
     if (!isTracking || !viewerRef.current || !shouldAutoScrollRef.current) {
@@ -131,7 +156,24 @@ export function LogViewer({
   }, [log]);
 
   const progressItems = useMemo(() => extractProgressFromLog(renderedContent), [renderedContent]);
-  const evalCards = useMemo(() => parseEvalLogEntries(evalLog?.entries ?? []), [evalLog]);
+  const evalCards = useMemo(() => {
+    if (chainEvalLogs.length > 0) {
+      return dedupeEvalCardsByContent(
+        chainEvalLogs.flatMap((item) =>
+          parseEvalLogEntries(item.response.entries, {
+            trainingIndex: item.trainingIndex,
+            trainingTotal: item.trainingTotal,
+            idPrefix: item.jobId,
+          }),
+        ),
+      );
+    }
+    return dedupeEvalCardsByContent(
+      parseEvalLogEntries(evalLog?.entries ?? [], {
+        idPrefix: activeJobId ?? undefined,
+      }),
+    );
+  }, [activeJobId, chainEvalLogs, evalJobs.length, evalLog]);
   const hasProgress = progressItems.length > 0;
   const showFullLog = !hasProgress || isLogExpanded;
 
@@ -190,18 +232,29 @@ export function LogViewer({
     evalRequestControllerRef.current = controller;
     isEvalRequestInFlightRef.current = true;
     try {
-      const next = await getJobEvalLines(job.job_id, {
+      const responses = await getJobEvalLinesBatch(evalJobs.map((item) => item.job_id), {
         pattern: "latest_eval=",
-        limit: 12,
+        limit: 0,
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
         return;
       }
+      const trainingTotal = evalJobs.length;
+      const nextChainEvalLogs = responses.map((response, index) => ({
+        jobId: evalJobs[index]?.job_id ?? response.job_id,
+        trainingIndex: index + 1,
+        trainingTotal,
+        response,
+      }));
+      setChainEvalLogs(trainingTotal > 1 ? nextChainEvalLogs : []);
+      const next = responses[responses.length - 1] ?? null;
       setEvalLog(next);
       const updatedAt = Date.now();
-      appliedEvalCacheAtRef.current = updatedAt;
-      onCacheUpdate(job.job_id, { eval_log: next, eval_updated_at: updatedAt });
+      if (trainingTotal === 1 && next) {
+        appliedEvalCacheAtRef.current = updatedAt;
+        onCacheUpdate(job.job_id, { eval_log: next, eval_updated_at: updatedAt });
+      }
       setEvalError(null);
     } catch (err) {
       if ((err as Error).name === "AbortError") {
@@ -300,8 +353,13 @@ export function LogViewer({
             {evalCards.map((card, index) => (
               <article key={card.id} className="eval-card" title={card.rawLine}>
                 <div className="eval-card__header">
-                  <strong>评估 #{evalCards.length - index}</strong>
-                  {card.lineNumber ? <span>#{card.lineNumber}</span> : null}
+                  <strong>评估 #{index + 1}</strong>
+                  <div className="eval-card__tags">
+                    {card.trainingIndex && card.trainingTotal ? (
+                      <span>第 {card.trainingIndex}/{card.trainingTotal} 次训练</span>
+                    ) : null}
+                    {card.lineNumber ? <span>日志 #{card.lineNumber}</span> : null}
+                  </div>
                 </div>
                 {card.prefix ? <p className="eval-card__prefix">{card.prefix}</p> : null}
                 <div className="eval-card__metrics">

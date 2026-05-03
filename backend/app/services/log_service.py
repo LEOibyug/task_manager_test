@@ -90,14 +90,15 @@ class LogService:
         job = self.resolve_job_log_record(job_id)
 
         safe_pattern = pattern.strip() or "latest_eval="
-        safe_limit = min(max(limit, 1), 50)
-        command = "grep -a -n -- {pattern} {path} | tail -n {limit}".format(
+        safe_limit = min(max(limit, 0), 10000)
+        command = "grep -a -n -- {pattern} {path}".format(
             pattern=shlex.quote(safe_pattern),
             path=shlex.quote(job.log_path),
-            limit=safe_limit,
         )
+        if safe_limit > 0:
+            command = f"{command} | tail -n {safe_limit}"
         result = self.ssh_gateway.run(job.account, command)
-        deduped_entries: dict[str, EvalLogEntry] = {}
+        deduped_entries: "OrderedDict[str, EvalLogEntry]" = OrderedDict()
         if result.stdout:
             for raw_line in result.stdout.splitlines():
                 if not raw_line.strip():
@@ -111,8 +112,7 @@ class LogService:
                 content = self._extract_latest_eval_content(raw_content)
                 if not content:
                     continue
-                if content in deduped_entries:
-                    del deduped_entries[content]
+                deduped_entries.pop(content, None)
                 deduped_entries[content] = EvalLogEntry(line_number=line_no, content=content)
         return EvalLogResponse(
             job_id=job_id,
@@ -145,7 +145,7 @@ class LogService:
         text: str,
         limit: int = 12,
     ) -> list[EvalLogEntry]:
-        safe_limit = min(max(limit, 1), 50)
+        safe_limit = min(max(limit, 1), 1000)
         deduped_entries: "OrderedDict[str, EvalLogEntry]" = OrderedDict()
         for entry in existing_entries[-safe_limit:]:
             deduped_entries[entry.content] = entry

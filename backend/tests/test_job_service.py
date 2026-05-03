@@ -66,7 +66,7 @@ class JobServiceTestCase(unittest.TestCase):
                 stderr="",
                 exit_code=0,
             ),
-            ("worker1", "/srv/worker1/repo::sbatch experiments/exp001/train.sbatch -w gpu1"): CommandResult(
+            ("worker1", "/srv/worker1/repo::sbatch -w gpu1 experiments/exp001/train.sbatch"): CommandResult(
                 command="sbatch",
                 stdout="Submitted batch job 12345\n",
                 stderr="",
@@ -159,7 +159,7 @@ class JobServiceTestCase(unittest.TestCase):
                 stderr="",
                 exit_code=0,
             ),
-            ("worker1", "/srv/worker1/repo::sbatch experiments/exp001/train.sbatch -w gpu1"): CommandResult(
+            ("worker1", "/srv/worker1/repo::sbatch -w gpu1 experiments/exp001/train.sbatch"): CommandResult(
                 command="sbatch",
                 stdout="Submitted batch job 67890\n",
                 stderr="",
@@ -274,9 +274,9 @@ class JobServiceTestCase(unittest.TestCase):
 
     def test_refresh_jobs_queries_each_recorded_job_account(self) -> None:
         commands = {
-            ("main", "::squeue -u \"main\" -h -o \"%i|%T|%M|%S|%R\""): CommandResult(
+            ("main", "::squeue -u \"main\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(
                 command="squeue",
-                stdout="50001|RUNNING|00:03|2026-04-28T10:00:00|gpu1\n",
+                stdout="50001|RUNNING|00:03|2026-04-28T10:00:00|gpu1|gpu1\n",
                 stderr="",
                 exit_code=0,
             ),
@@ -286,7 +286,7 @@ class JobServiceTestCase(unittest.TestCase):
                 stderr="",
                 exit_code=0,
             ),
-            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%R\""): CommandResult(
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(
                 command="squeue",
                 stdout="",
                 stderr="",
@@ -312,6 +312,39 @@ class JobServiceTestCase(unittest.TestCase):
         )
         jobs = service.refresh_jobs().jobs
         self.assertTrue(any(job.job_id == "50001" and job.account == "main" for job in jobs))
+
+    def test_refresh_jobs_uses_allocated_nodes_not_pending_reason(self) -> None:
+        commands = {
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(
+                command="squeue",
+                stdout="50003|PENDING|00:00|N/A|(None)|Priority\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::sacct -j \"50003\" --format=JobID,State,Elapsed -n -P"): CommandResult(
+                command="sacct",
+                stdout="",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="50003",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                preferred_gpu_node="gpu2",
+                status="PENDING",
+            )
+        )
+
+        jobs = service.refresh_jobs().jobs
+
+        self.assertEqual(jobs[0].nodes, [])
+        self.assertEqual(jobs[0].preferred_gpu_node, "gpu2")
 
     def test_refresh_jobs_does_not_overwrite_known_experiment_with_unknown_placeholder(self) -> None:
         gateway = InMemorySSHGateway()
@@ -382,7 +415,7 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].job_id, "40002")
 
-    def test_delete_failed_job_removes_only_failed_record(self) -> None:
+    def test_delete_job_removes_failed_record(self) -> None:
         gateway = InMemorySSHGateway()
         service = JobService(self.config_service, gateway, self.database)
         self.database.upsert_job(
@@ -395,11 +428,28 @@ class JobServiceTestCase(unittest.TestCase):
             )
         )
 
-        service.delete_failed_job("41001")
+        service.delete_job("41001")
 
         self.assertIsNone(self.database.get_job("41001"))
 
-    def test_delete_failed_job_rejects_active_record(self) -> None:
+    def test_delete_job_removes_cancelled_record(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="41003",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="CANCELLED",
+            )
+        )
+
+        service.delete_job("41003")
+
+        self.assertIsNone(self.database.get_job("41003"))
+
+    def test_delete_job_removes_active_record(self) -> None:
         gateway = InMemorySSHGateway()
         service = JobService(self.config_service, gateway, self.database)
         self.database.upsert_job(
@@ -412,10 +462,9 @@ class JobServiceTestCase(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(Exception, "Only failed jobs"):
-            service.delete_failed_job("41002")
+        service.delete_job("41002")
 
-        self.assertIsNotNone(self.database.get_job("41002"))
+        self.assertIsNone(self.database.get_job("41002"))
 
     def test_retry_timeout_job_creates_continuation_job(self) -> None:
         files = {
@@ -442,7 +491,7 @@ class JobServiceTestCase(unittest.TestCase):
                 stderr="",
                 exit_code=0,
             ),
-            ("worker1", "/srv/worker1/repo::sbatch experiments/exp001/train.sbatch -w gpu1"): CommandResult(
+            ("worker1", "/srv/worker1/repo::sbatch -w gpu1 experiments/exp001/train.sbatch"): CommandResult(
                 command="sbatch",
                 stdout="Submitted batch job 60002\n",
                 stderr="",
@@ -474,7 +523,7 @@ class JobServiceTestCase(unittest.TestCase):
 
     def test_refresh_jobs_marks_timeout_as_timeout_status(self) -> None:
         commands = {
-            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%R\""): CommandResult(
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(
                 command="squeue",
                 stdout="",
                 stderr="",

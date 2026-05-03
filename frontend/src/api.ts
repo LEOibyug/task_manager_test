@@ -127,6 +127,28 @@ export async function getJobEvalLines(
   });
 }
 
+export async function getJobEvalLinesBatch(
+  jobIds: string[],
+  options: { pattern?: string; limit?: number; signal?: AbortSignal } = {},
+): Promise<EvalLogResponse[]> {
+  const pattern = options.pattern ?? "latest_eval=";
+  return Promise.all(
+    jobIds.map((jobId) =>
+      getJobEvalLines(jobId, options).catch((error) => {
+        if ((error as Error).name === "AbortError") {
+          throw error;
+        }
+        return {
+          job_id: jobId,
+          log_path: "",
+          pattern,
+          entries: [],
+        };
+      }),
+    ),
+  );
+}
+
 export async function downloadOutputFile(jobId: string, path: string): Promise<void> {
   window.open(`/api/jobs/${jobId}/outputs/file?path=${encodeURIComponent(path)}`, "_blank", "noopener,noreferrer");
 }

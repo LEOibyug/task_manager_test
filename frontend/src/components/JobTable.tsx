@@ -106,6 +106,20 @@ export function JobTable({
               <td>
                 <div className="job-status-cell">
                   <StatusBadge status={isTimeoutJob(job) ? "TIMEOUT" : job.status} />
+                </div>
+              </td>
+              <td>{isMainAccountJob ? "主账户任务" : job.synced ? "已同步" : "未同步"}</td>
+              <td>{job.runtime ?? "-"}</td>
+              <td>
+                {job.preferred_gpu_node ? <div>指定 {job.preferred_gpu_node}</div> : null}
+                {job.nodes.length > 0 ? (
+                  <div className={job.preferred_gpu_node ? "job-subnote" : ""}>运行 {job.nodes.join(", ")}</div>
+                ) : null}
+                {!job.preferred_gpu_node && job.nodes.length === 0 ? "-" : null}
+              </td>
+              <td>{job.max_runtime_hours}h</td>
+              <td>
+                <div className="table-actions">
                   {showRetry ? (
                     <button
                       className="ghost-button compact-action-button"
@@ -118,17 +132,9 @@ export function JobTable({
                       {isRetrying ? "续训中..." : "续训"}
                     </button>
                   ) : null}
-                </div>
-              </td>
-              <td>{isMainAccountJob ? "主账户任务" : job.synced ? "已同步" : "未同步"}</td>
-              <td>{job.runtime ?? "-"}</td>
-              <td>{job.nodes.join(", ") || "-"}</td>
-              <td>{job.max_runtime_hours}h</td>
-              <td>
-                <div className="table-actions">
                   {!isMainAccountJob ? (
                     <button
-                      className="ghost-button"
+                      className="ghost-button compact-action-button"
                       disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -139,7 +145,7 @@ export function JobTable({
                     </button>
                   ) : null}
                   <button
-                    className="ghost-button danger-button"
+                    className="ghost-button danger-button compact-action-button"
                     disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -148,18 +154,16 @@ export function JobTable({
                   >
                     {isCancelling ? "取消中..." : "取消"}
                   </button>
-                  {job.status === "FAILED" && !isTimeoutJob(job) ? (
-                    <button
-                      className="ghost-button danger-button"
-                      disabled={isSyncing || isCancelling || isRetrying || isDeleting}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDelete(job);
-                      }}
-                    >
-                      {isDeleting ? "删除中..." : "删除"}
-                    </button>
-                  ) : null}
+                  <button
+                    className="ghost-button danger-button compact-action-button"
+                    disabled={isSyncing || isCancelling || isRetrying || isDeleting}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDelete(job);
+                    }}
+                  >
+                    {isDeleting ? "删除中..." : "删除"}
+                  </button>
                 </div>
               </td>
             </tr>

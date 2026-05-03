@@ -230,14 +230,14 @@ async def cancel_job(job_id: str, container: AppContainer = Depends(get_containe
 
 
 @router.delete("/jobs/{job_id}", response_model=RefreshJobsResponse)
-async def delete_failed_job(job_id: str, container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
+async def delete_job(job_id: str, container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
     loop = asyncio.get_running_loop()
     operation_id, logger = build_command_logger(container, loop, "job-delete")
-    logger({"stage": "operation_start", "message": f"正在删除失败任务 {job_id} 的本地记录"})
+    logger({"stage": "operation_start", "message": f"正在删除任务 {job_id} 的本地记录"})
     try:
-        await run_in_threadpool(container.job_service.delete_failed_job, job_id)
+        await run_in_threadpool(container.job_service.delete_job, job_id)
         result = container.job_service.list_jobs()
-        logger({"stage": "operation_end", "message": f"失败任务 {job_id} 的本地记录已删除"})
+        logger({"stage": "operation_end", "message": f"任务 {job_id} 的本地记录已删除"})
         await container.broadcaster.broadcast(
             container.scheduler.build_jobs_refreshed_event(result.jobs)
         )
@@ -280,7 +280,7 @@ def read_log(
 def read_eval_log_lines(
     job_id: str,
     pattern: str = Query(default="latest_eval="),
-    limit: int = Query(default=12, ge=1, le=50),
+    limit: int = Query(default=12, ge=0, le=10000),
     container: AppContainer = Depends(get_container),
 ) -> EvalLogResponse:
     try:

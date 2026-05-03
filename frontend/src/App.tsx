@@ -279,9 +279,15 @@ export default function App() {
   }
 
   async function handleDeleteJob(job: JobRecord) {
+    const confirmed = window.confirm(
+      `确定删除任务 ${job.job_id} 的本地记录吗？\n\n这只会从任务列表移除该条目，不会取消或删除远端 Slurm 任务与输出文件。`,
+    );
+    if (!confirmed) {
+      return;
+    }
     setDeletingJobIds((current) => Array.from(new Set([...current, job.job_id])));
     try {
-      await withPendingRequest("删除任务", `正在删除失败任务 ${job.job_id} 的本地记录。`, async () => {
+      await withPendingRequest("删除任务", `正在删除任务 ${job.job_id} 的本地记录。`, async () => {
         const response = await deleteJob(job.job_id);
         setJobs(response.jobs);
         if (selectedJob?.job_id === job.job_id) {

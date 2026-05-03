@@ -513,16 +513,20 @@ select {
 }
 
 .table-actions {
-  display: grid;
-  gap: 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 180px;
 }
 
 .compact-action-button {
-  padding: 0.18rem 0.55rem;
-  min-height: auto;
+  padding: 0.22rem 0.58rem;
+  min-height: 1.75rem;
   border-radius: 999px;
   font-size: 0.76rem;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .status-badge {
@@ -734,7 +738,7 @@ select {
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 0.7rem;
 }
 
@@ -742,9 +746,25 @@ select {
   color: #f4f8ff;
 }
 
-.eval-card__header span,
 .eval-card__prefix {
   color: rgba(225, 233, 243, 0.76);
+}
+
+.eval-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.eval-card__tags span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(225, 233, 243, 0.76);
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .eval-card__prefix {

@@ -135,10 +135,9 @@ class JobService:
         return sum(1 for state in states if state in {"RUNNING", "PENDING"})
 
     def _build_sbatch_command(self, relative_script: str, preferred_gpu_node: str | None) -> str:
-        command = f"sbatch {relative_script}"
         if preferred_gpu_node:
-            command += f" -w {preferred_gpu_node}"
-        return command
+            return f"sbatch -w {preferred_gpu_node} {relative_script}"
+        return f"sbatch {relative_script}"
 
     def _is_timeout_job(self, job: JobRecord) -> bool:
         return job.status == "TIMEOUT" or bool(job.last_error and "TIMEOUT" in job.last_error)
@@ -232,14 +231,15 @@ class JobService:
             )
         live_result = self.ssh_gateway.run(
             username,
-            'squeue -u "{username}" -h -o "%i|%T|%M|%S|%R"'.format(username=username),
+            'squeue -u "{username}" -h -o "%i|%T|%M|%S|%N|%R"'.format(username=username),
             logger=logger,
         )
         if live_result.exit_code == 0:
             for line in live_result.stdout.splitlines():
                 if not line.strip():
                     continue
-                job_id, state, runtime, start_time, node_value = (line.split("|", 4) + [""] * 5)[:5]
+                parts = (line.split("|", 5) + [""] * 6)[:6]
+                job_id, state, runtime, start_time, node_value, _reason_value = parts
                 previous = existing_jobs.get(job_id)
                 cached = self._clone_job(previous) if previous is not None else JobRecord(
                     job_id=job_id,
@@ -250,7 +250,7 @@ class JobService:
                 )
                 cached.status = state if state in {"RUNNING", "PENDING"} else "UNKNOWN"
                 cached.runtime = runtime or cached.runtime
-                cached.nodes = [item.strip() for item in node_value.split(",") if item.strip()]
+                cached.nodes = self._parse_allocated_nodes(node_value)
                 cached.last_error = None
                 if start_time and start_time not in {"N/A", "Unknown"}:
                     try:
@@ -314,6 +314,14 @@ class JobService:
                 account_updates[job_id] = cached
 
         return list(account_updates.values())
+
+    def _parse_allocated_nodes(self, node_value: str) -> list[str]:
+        empty_values = {"", "(None)", "None", "N/A", "n/a"}
+        return [
+            item.strip()
+            for item in node_value.split(",")
+            if item.strip() and item.strip() not in empty_values
+        ]
 
     def submit_job(
         self,
@@ -461,12 +469,10 @@ class JobService:
         job.synced = self._resolve_sync_state(self.config_service.load(), job)
         return job
 
-    def delete_failed_job(self, job_id: str) -> None:
+    def delete_job(self, job_id: str) -> None:
         job = self.database.get_job(job_id)
         if job is None:
             raise SSHError(f"Unknown job id: {job_id}")
-        if job.status != "FAILED" or self._is_timeout_job(job):
-            raise SSHError(f"Only failed jobs can be deleted individually: {job_id}")
         self.database.delete_job(job_id)
 
     def refresh_jobs(self, logger: CommandLogger | None = None) -> JobListResponse:

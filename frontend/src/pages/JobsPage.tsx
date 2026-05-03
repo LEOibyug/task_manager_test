@@ -147,7 +147,7 @@ export function JobsPage({
         />
       </SectionCard>
       <div className="jobs-detail-grid">
-        <LogViewer job={selectedJob} cacheEntry={selectedJobCache} onCacheUpdate={onUpdateJobCache} />
+        <LogViewer job={selectedJob} jobs={jobs} cacheEntry={selectedJobCache} onCacheUpdate={onUpdateJobCache} />
         <OutputTreeView job={selectedJob} />
       </div>
     </div>

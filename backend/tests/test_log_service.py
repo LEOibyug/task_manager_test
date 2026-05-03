@@ -161,6 +161,51 @@ class LogServiceTestCase(unittest.TestCase):
             self.assertEqual(result.entries[0].line_number, 120)
             self.assertIn("ads/EVTOL=80.0000", result.entries[1].content)
 
+    def test_read_eval_lines_without_limit_deduplicates_by_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            db_path = Path(temp_dir) / "app.db"
+            config_service = ConfigService(config_path)
+            config_service.save(
+                AppConfig(
+                    main_username="main",
+                    sub_usernames=["worker1"],
+                    repo_paths={"main": "/srv/main/repo", "worker1": "/srv/worker1/repo"},
+                )
+            )
+            database = Database(db_path)
+            database.initialize()
+            database.upsert_job(
+                JobRecord(
+                    job_id="25390",
+                    account="worker1",
+                    experiment="exp001",
+                    script_path="/srv/worker1/repo/experiments/exp001/run.sbatch",
+                    log_path="/srv/worker1/repo/logs/train.out",
+                )
+            )
+            grep_command = "grep -a -n -- latest_eval= /srv/worker1/repo/logs/train.out"
+            gateway = InMemorySSHGateway(
+                commands={
+                    ("worker1", f"::{grep_command}"): CommandResult(
+                        command=grep_command,
+                        stdout=(
+                            "120:latest_eval=acc=80.0000\n"
+                            "240:latest_eval=acc=80.0000\n"
+                        ),
+                        stderr="",
+                        exit_code=0,
+                    )
+                }
+            )
+            job_service = JobService(config_service, gateway, database)
+            service = LogService(gateway, job_service, RuntimeSettings())
+
+            result = service.read_eval_lines("25390", limit=0)
+
+            self.assertEqual(len(result.entries), 1)
+            self.assertEqual(result.entries[0].line_number, 240)
+
 
 if __name__ == "__main__":
     unittest.main()
