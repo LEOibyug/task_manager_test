@@ -382,6 +382,41 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].job_id, "40002")
 
+    def test_delete_failed_job_removes_only_failed_record(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="41001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="FAILED",
+            )
+        )
+
+        service.delete_failed_job("41001")
+
+        self.assertIsNone(self.database.get_job("41001"))
+
+    def test_delete_failed_job_rejects_active_record(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="41002",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="RUNNING",
+            )
+        )
+
+        with self.assertRaisesRegex(Exception, "Only failed jobs"):
+            service.delete_failed_job("41002")
+
+        self.assertIsNotNone(self.database.get_job("41002"))
+
     def test_retry_timeout_job_creates_continuation_job(self) -> None:
         files = {
             "worker1": {
@@ -423,7 +458,7 @@ class JobServiceTestCase(unittest.TestCase):
                 experiment="exp001",
                 script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
                 preferred_gpu_node="gpu1",
-                status="FAILED",
+                status="TIMEOUT",
                 last_error="TIMEOUT",
             )
         )
@@ -436,6 +471,44 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(new_job.preferred_gpu_node, "gpu1")
         original_job = self.database.get_job("60001")
         self.assertEqual(original_job.continuation_root_job_id, "60001")
+
+    def test_refresh_jobs_marks_timeout_as_timeout_status(self) -> None:
+        commands = {
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%R\""): CommandResult(
+                command="squeue",
+                stdout="",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::sacct -j \"61001\" --format=JobID,State,Elapsed -n -P"): CommandResult(
+                command="sacct",
+                stdout="61001|TIMEOUT|48:00:00\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::seff 61001"): CommandResult(
+                command="seff",
+                stdout="Job ID: 61001\n",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="61001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="RUNNING",
+            )
+        )
+
+        jobs = service.refresh_jobs().jobs
+
+        self.assertEqual(jobs[0].status, "TIMEOUT")
+        self.assertEqual(jobs[0].last_error, "TIMEOUT")
 
 
 if __name__ == "__main__":

@@ -229,6 +229,24 @@ async def cancel_job(job_id: str, container: AppContainer = Depends(get_containe
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.delete("/jobs/{job_id}", response_model=RefreshJobsResponse)
+async def delete_failed_job(job_id: str, container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
+    loop = asyncio.get_running_loop()
+    operation_id, logger = build_command_logger(container, loop, "job-delete")
+    logger({"stage": "operation_start", "message": f"正在删除失败任务 {job_id} 的本地记录"})
+    try:
+        await run_in_threadpool(container.job_service.delete_failed_job, job_id)
+        result = container.job_service.list_jobs()
+        logger({"stage": "operation_end", "message": f"失败任务 {job_id} 的本地记录已删除"})
+        await container.broadcaster.broadcast(
+            container.scheduler.build_jobs_refreshed_event(result.jobs)
+        )
+        return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=f"{exc}（操作 {operation_id}）") from exc
+
+
 @router.post("/jobs/clear", response_model=RefreshJobsResponse)
 async def clear_jobs(container: AppContainer = Depends(get_container)) -> RefreshJobsResponse:
     loop = asyncio.get_running_loop()

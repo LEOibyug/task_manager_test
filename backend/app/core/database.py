@@ -60,6 +60,7 @@ class Database:
                 """
             )
             self._ensure_job_columns(connection)
+            self._migrate_legacy_job_rows(connection)
 
     def _ensure_job_columns(self, connection: sqlite3.Connection) -> None:
         existing_columns = {
@@ -77,6 +78,17 @@ class Database:
                 connection.execute(
                     f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}"
                 )
+
+    def _migrate_legacy_job_rows(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            UPDATE jobs
+            SET status = 'TIMEOUT'
+            WHERE status = 'FAILED'
+              AND last_error IS NOT NULL
+              AND UPPER(last_error) LIKE '%TIMEOUT%'
+            """
+        )
 
     def _row_value(self, row: sqlite3.Row, key: str) -> str | int | None:
         return row[key] if key in row.keys() else None
@@ -183,6 +195,11 @@ class Database:
                 """,
                 (job_id, timestamp),
             )
+
+    def delete_job(self, job_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            connection.execute("DELETE FROM sync_records WHERE job_id = ?", (job_id,))
 
     def clear_jobs(self) -> None:
         with self.connect() as connection:

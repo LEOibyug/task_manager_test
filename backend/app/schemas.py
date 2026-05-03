@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-JobState = Literal["RUNNING", "PENDING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]
+JobState = Literal["RUNNING", "PENDING", "COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "UNKNOWN"]
 GpuNode = Literal["gpu1", "gpu2", "gpu3"]
 
 

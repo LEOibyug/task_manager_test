@@ -66,6 +66,10 @@ export async function clearJobs(): Promise<JobsResponse> {
   return requestJson<JobsResponse>("/api/jobs/clear", { method: "POST" });
 }
 
+export async function deleteJob(jobId: string): Promise<JobsResponse> {
+  return requestJson<JobsResponse>(`/api/jobs/${jobId}`, { method: "DELETE" });
+}
+
 export async function submitJob(payload: {
   experiment_name: string;
   script_path: string;

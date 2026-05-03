@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { cancelJob, clearJobs, getConfig, listJobs, refreshJobs, retryJob, syncJob } from "./api";
+import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, syncJob } from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
@@ -15,6 +15,7 @@ import type {
   StatusEvent,
 } from "./types";
 import type { ExperimentSummary } from "./types";
+import { buildJobChainGroups } from "./utils/jobChain";
 
 const emptyConfig: AppConfig = {
   server_ip: "",
@@ -33,6 +34,11 @@ type PendingRequest = {
 };
 
 const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
+const AUTO_RETRY_STORAGE_KEY = "exp-queue-manager:auto-retry-enabled";
+
+function isTimeoutJob(job: JobRecord): boolean {
+  return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
+}
 
 function createEmptyJobLogCacheEntry(jobId: string): JobLogCacheEntry {
   return {
@@ -59,7 +65,12 @@ export default function App() {
   const [syncingJobIds, setSyncingJobIds] = useState<string[]>([]);
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
   const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
+  const [deletingJobIds, setDeletingJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(() => {
+    return window.localStorage.getItem(AUTO_RETRY_STORAGE_KEY) === "true";
+  });
+  const autoRetryAttemptedJobIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setSelectedJob((current) => {
@@ -74,6 +85,28 @@ export default function App() {
     getConfig().then(setConfig).catch(() => undefined);
     listJobs().then((response) => setJobs(response.jobs)).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(AUTO_RETRY_STORAGE_KEY, String(autoRetryEnabled));
+  }, [autoRetryEnabled]);
+
+  useEffect(() => {
+    if (!autoRetryEnabled) {
+      return;
+    }
+
+    for (const group of buildJobChainGroups(jobs)) {
+      const latestJob = group.summaryJob;
+      if (!isTimeoutJob(latestJob)) {
+        continue;
+      }
+      if (retryingJobIds.includes(latestJob.job_id) || autoRetryAttemptedJobIds.current.has(latestJob.job_id)) {
+        continue;
+      }
+      autoRetryAttemptedJobIds.current.add(latestJob.job_id);
+      void handleRetry(latestJob, { automatic: true });
+    }
+  }, [autoRetryEnabled, jobs, retryingJobIds]);
 
   useEffect(() => {
     const cacheableJobIds = new Set(
@@ -245,10 +278,28 @@ export default function App() {
     }
   }
 
-  async function handleRetry(job: JobRecord) {
+  async function handleDeleteJob(job: JobRecord) {
+    setDeletingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      await withPendingRequest("删除任务", `正在删除失败任务 ${job.job_id} 的本地记录。`, async () => {
+        const response = await deleteJob(job.job_id);
+        setJobs(response.jobs);
+        if (selectedJob?.job_id === job.job_id) {
+          setSelectedJob(null);
+        }
+      });
+    } catch (error) {
+      setBanner(`删除任务失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setDeletingJobIds((current) => current.filter((item) => item !== job.job_id));
+    }
+  }
+
+  async function handleRetry(job: JobRecord, options: { automatic?: boolean } = {}) {
     setRetryingJobIds((current) => Array.from(new Set([...current, job.job_id])));
     try {
-      await withPendingRequest("续训任务", `任务 ${job.job_id} 已超时，正在以相同账户与脚本重新提交。`, async () => {
+      const label = options.automatic ? "自动续训" : "续训任务";
+      await withPendingRequest(label, `任务 ${job.job_id} 已超时，正在以相同账户与脚本重新提交。`, async () => {
         const response = await retryJob(job.job_id);
         const nextJobs = await listJobs();
         setJobs(nextJobs.jobs);
@@ -257,6 +308,8 @@ export default function App() {
           setSelectedJob(nextSelected);
         }
       });
+    } catch (error) {
+      setBanner(`${options.automatic ? "自动续训" : "续训"}失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setRetryingJobIds((current) => current.filter((item) => item !== job.job_id));
     }
@@ -317,11 +370,15 @@ export default function App() {
           onSync={handleSync}
           onCancel={handleCancel}
           onRetry={handleRetry}
+          onDelete={handleDeleteJob}
+          autoRetryEnabled={autoRetryEnabled}
+          onAutoRetryChange={setAutoRetryEnabled}
           isRefreshing={isRefreshingJobs}
           isClearing={isClearingJobs}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
+          deletingJobIds={deletingJobIds}
         />
       ) : null}
       <OperationConsole

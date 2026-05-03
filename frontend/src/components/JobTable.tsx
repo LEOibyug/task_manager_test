@@ -1,4 +1,7 @@
+import { Fragment } from "react";
+
 import type { JobRecord } from "../types";
+import { buildJobChainGroups } from "../utils/jobChain";
 import { StatusBadge } from "./StatusBadge";
 
 interface JobTableProps {
@@ -9,9 +12,11 @@ interface JobTableProps {
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
+  onDelete: (job: JobRecord) => void;
   syncingJobIds: string[];
   cancellingJobIds: string[];
   retryingJobIds: string[];
+  deletingJobIds: string[];
 }
 
 export function JobTable({
@@ -22,13 +27,17 @@ export function JobTable({
   onSync,
   onCancel,
   onRetry,
+  onDelete,
   syncingJobIds,
   cancellingJobIds,
   retryingJobIds,
+  deletingJobIds,
 }: JobTableProps) {
   function isTimeoutJob(job: JobRecord) {
-    return job.status === "FAILED" && (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
+    return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
   }
+
+  const chainGroups = buildJobChainGroups(jobs);
 
   return (
     <div className="table-shell">
@@ -47,38 +56,60 @@ export function JobTable({
           </tr>
         </thead>
         <tbody>
-          {jobs.map((job) => {
+          {chainGroups.map((group) => {
+            const chronologicalJobs = [...group.jobs].reverse();
+            return (
+              <Fragment key={group.chainId}>
+                {group.isChain ? (
+                  <tr className="job-chain-header">
+                    <td colSpan={9}>
+                      <div className="job-chain-summary">
+                        <span>续训链 {group.chainId}</span>
+                        <span>共 {group.jobs.length} 次</span>
+                        <span>最新任务 {group.summaryJob.job_id}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                {group.jobs.map((job) => {
             const isSyncing = syncingJobIds.includes(job.job_id);
             const isCancelling = cancellingJobIds.includes(job.job_id);
             const isRetrying = retryingJobIds.includes(job.job_id);
+            const isDeleting = deletingJobIds.includes(job.job_id);
             const isMainAccountJob = job.account === mainUsername;
-            const canRetry = isTimeoutJob(job);
+            const canRetry = isTimeoutJob(job) && group.summaryJob.job_id === job.job_id;
             const showRetry = canRetry || isRetrying;
+            const chainIndex = chronologicalJobs.findIndex((item) => item.job_id === job.job_id) + 1;
+            const previousJob = chronologicalJobs[chainIndex - 2] ?? null;
             return (
             <tr
               key={job.job_id}
-              className={selectedJobId === job.job_id ? "is-selected" : ""}
+              className={[
+                selectedJobId === job.job_id ? "is-selected" : "",
+                group.isChain ? "job-chain-row" : "",
+              ].filter(Boolean).join(" ")}
               onClick={() => onSelect(job)}
             >
               <td>
-                <div>{job.job_id}</div>
-                {job.resumed_from_job_id ? <div className="job-subnote">续自 {job.resumed_from_job_id}</div> : null}
-                {!job.resumed_from_job_id && job.continuation_root_job_id === job.job_id ? <div className="job-subnote">续训链根任务</div> : null}
+                <div className="job-id-stack">
+                  <span>{job.job_id}</span>
+                  {group.isChain ? <span className="job-chain-step">第 {chainIndex}/{group.jobs.length} 次</span> : null}
+                </div>
+                {previousJob ? <div className="job-subnote">续自 {previousJob.job_id}</div> : null}
+                {group.isChain && chainIndex === 1 ? <div className="job-subnote">链路起点</div> : null}
               </td>
               <td>{job.account}</td>
               <td>
                 <div>{job.experiment}</div>
-                {job.continuation_root_job_id && job.continuation_root_job_id !== job.job_id ? (
-                  <div className="job-subnote">链路 {job.continuation_root_job_id}</div>
-                ) : null}
+                {group.isChain ? <div className="job-subnote">根任务 {group.chainId}</div> : null}
               </td>
               <td>
                 <div className="job-status-cell">
-                  <StatusBadge status={job.status} />
+                  <StatusBadge status={isTimeoutJob(job) ? "TIMEOUT" : job.status} />
                   {showRetry ? (
                     <button
                       className="ghost-button compact-action-button"
-                      disabled={!canRetry || isSyncing || isCancelling || isRetrying}
+                      disabled={!canRetry || isSyncing || isCancelling || isRetrying || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onRetry(job);
@@ -98,7 +129,7 @@ export function JobTable({
                   {!isMainAccountJob ? (
                     <button
                       className="ghost-button"
-                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying}
+                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onSync(job);
@@ -109,7 +140,7 @@ export function JobTable({
                   ) : null}
                   <button
                     className="ghost-button danger-button"
-                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying}
+                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(job);
@@ -117,9 +148,24 @@ export function JobTable({
                   >
                     {isCancelling ? "取消中..." : "取消"}
                   </button>
+                  {job.status === "FAILED" && !isTimeoutJob(job) ? (
+                    <button
+                      className="ghost-button danger-button"
+                      disabled={isSyncing || isCancelling || isRetrying || isDeleting}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete(job);
+                      }}
+                    >
+                      {isDeleting ? "删除中..." : "删除"}
+                    </button>
+                  ) : null}
                 </div>
               </td>
             </tr>
+            );
+                })}
+              </Fragment>
             );
           })}
         </tbody>

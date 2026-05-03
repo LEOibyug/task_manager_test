@@ -141,7 +141,7 @@ class JobService:
         return command
 
     def _is_timeout_job(self, job: JobRecord) -> bool:
-        return job.status == "FAILED" and bool(job.last_error and "TIMEOUT" in job.last_error)
+        return job.status == "TIMEOUT" or bool(job.last_error and "TIMEOUT" in job.last_error)
 
     def _clone_job(self, job: JobRecord) -> JobRecord:
         return job.model_copy(deep=True)
@@ -195,7 +195,7 @@ class JobService:
         return 'sacct -u "{username}" --format=JobID,State,Elapsed -n -P'.format(username=username)
 
     def _should_collect_seff(self, previous: JobRecord | None, current: JobRecord) -> bool:
-        if current.status not in {"COMPLETED", "FAILED", "CANCELLED"}:
+        if current.status not in {"COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"}:
             return False
         if current.resource_usage is None:
             return True
@@ -292,7 +292,10 @@ class JobService:
                 elif state.startswith("CANCELLED"):
                     cached.status = "CANCELLED"
                     cached.last_error = "任务已取消"
-                elif state.startswith("FAILED") or state.startswith("TIMEOUT"):
+                elif state.startswith("TIMEOUT"):
+                    cached.status = "TIMEOUT"
+                    cached.last_error = state
+                elif state.startswith("FAILED"):
                     cached.status = "FAILED"
                     cached.last_error = state
                 cached.runtime = elapsed or cached.runtime
@@ -457,6 +460,14 @@ class JobService:
         self.database.upsert_job(job)
         job.synced = self._resolve_sync_state(self.config_service.load(), job)
         return job
+
+    def delete_failed_job(self, job_id: str) -> None:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        if job.status != "FAILED" or self._is_timeout_job(job):
+            raise SSHError(f"Only failed jobs can be deleted individually: {job_id}")
+        self.database.delete_job(job_id)
 
     def refresh_jobs(self, logger: CommandLogger | None = None) -> JobListResponse:
         config = self.config_service.load()

@@ -240,6 +240,62 @@ select {
   align-items: center;
 }
 
+.switch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.35rem;
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem 0.25rem 0.35rem;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(248, 245, 236, 0.9);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.switch-control input {
+  width: auto;
+  margin: 0;
+  accent-color: #5da2ff;
+}
+
+.job-category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.job-category-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.1rem;
+  padding: 0.25rem 0.68rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(248, 245, 236, 0.82);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.job-category-tab.active {
+  background: rgba(93, 162, 255, 0.18);
+  border-color: rgba(93, 162, 255, 0.36);
+  color: #d7eaff;
+}
+
+.job-category-tab span:last-child {
+  min-width: 1.4rem;
+  border-radius: 999px;
+  padding: 0.08rem 0.38rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.78rem;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -398,6 +454,51 @@ select {
   background: rgba(93, 162, 255, 0.12);
 }
 
+.job-chain-header td {
+  padding-top: 0.85rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 0;
+}
+
+.job-chain-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  color: rgba(225, 233, 243, 0.8);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.job-chain-summary span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.22rem 0.58rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.job-chain-row td:first-child {
+  border-left: 2px solid rgba(93, 162, 255, 0.38);
+}
+
+.job-id-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.job-chain-step {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.12rem 0.46rem;
+  background: rgba(93, 162, 255, 0.14);
+  color: #abd4ff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
 .job-subnote {
   margin-top: 0.2rem;
   color: rgba(225, 233, 243, 0.62);
@@ -452,6 +553,11 @@ select {
 .status-badge--cancelled {
   background: rgba(190, 174, 255, 0.18);
   color: #d2c8ff;
+}
+
+.status-badge--timeout {
+  background: rgba(255, 170, 76, 0.18);
+  color: #ffc88f;
 }
 
 .status-badge--failed,

@@ -1,4 +1,4 @@
-export type JobState = "RUNNING" | "PENDING" | "COMPLETED" | "FAILED" | "CANCELLED" | "UNKNOWN";
+export type JobState = "RUNNING" | "PENDING" | "COMPLETED" | "FAILED" | "TIMEOUT" | "CANCELLED" | "UNKNOWN";
 
 export interface AppConfig {
   server_ip: string;
