@@ -79,7 +79,7 @@ export function ExperimentsPage({
     const submitKey = `${file.path}:${targetAccount}`;
     const useGpuNode = gpuNodeEnabled[file.path] ?? false;
     const preferredGpuNode = useGpuNode ? selectedGpuNodes[file.path] ?? "gpu1" : null;
-    const useAutoRetry = autoRetryEnabled[file.path] ?? false;
+    const useAutoRetry = autoRetryEnabled[file.path] ?? true;
     const operationId = onOperationStart("提交任务", `提交请求已发送，将向账户 ${targetAccount} 发布脚本 ${file.name}。`);
     setSubmittingKeys((current) => Array.from(new Set([...current, submitKey])));
     try {
@@ -146,7 +146,7 @@ export function ExperimentsPage({
                 const isSubmitting = submittingKeys.includes(submitKey);
                 const useGpuNode = gpuNodeEnabled[file.path] ?? false;
                 const selectedGpuNode = selectedGpuNodes[file.path] ?? "gpu1";
-                const useAutoRetry = autoRetryEnabled[file.path] ?? false;
+                const useAutoRetry = autoRetryEnabled[file.path] ?? true;
                 return (
                 <article key={file.path} className="file-card">
                   <h3>{file.name}</h3>
@@ -202,7 +202,7 @@ export function ExperimentsPage({
                           ))}
                         </select>
                       ) : null}
-                      <label className="checkbox-row">
+                      <label className="slide-switch">
                         <input
                           type="checkbox"
                           checked={useAutoRetry}
@@ -214,7 +214,10 @@ export function ExperimentsPage({
                             }))
                           }
                         />
-                        <span>超时后自动续训</span>
+                        <span className="slide-switch__track" aria-hidden="true">
+                          <span className="slide-switch__thumb" />
+                        </span>
+                        <span className="slide-switch__label">超时后自动续训</span>
                       </label>
                       <button onClick={() => void publishScript(file)} disabled={isSubmitting}>
                         {isSubmitting ? "提交中..." : `发布到 ${targetAccount || "目标账户"}`}

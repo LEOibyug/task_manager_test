@@ -71,7 +71,7 @@ class JobRecord(BaseModel):
     last_error: str | None = None
     resumed_from_job_id: str | None = None
     continuation_root_job_id: str | None = None
-    auto_retry_enabled: bool = False
+    auto_retry_enabled: bool = True
 
 
 class JobListResponse(BaseModel):
@@ -84,7 +84,7 @@ class SubmitJobRequest(BaseModel):
     script_path: str
     account: str
     preferred_gpu_node: GpuNode | None = None
-    auto_retry_enabled: bool = False
+    auto_retry_enabled: bool = True
 
 
 class JobAutoRetryUpdateRequest(BaseModel):

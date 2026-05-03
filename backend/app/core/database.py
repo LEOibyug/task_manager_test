@@ -48,7 +48,7 @@ class Database:
                     last_error TEXT,
                     resumed_from_job_id TEXT,
                     continuation_root_job_id TEXT,
-                    auto_retry_enabled INTEGER NOT NULL DEFAULT 0
+                    auto_retry_enabled INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
@@ -73,7 +73,7 @@ class Database:
             "preferred_gpu_node": "TEXT",
             "resumed_from_job_id": "TEXT",
             "continuation_root_job_id": "TEXT",
-            "auto_retry_enabled": "INTEGER NOT NULL DEFAULT 0",
+            "auto_retry_enabled": "INTEGER NOT NULL DEFAULT 1",
         }
         for column_name, column_type in expected_columns.items():
             if column_name not in existing_columns:
@@ -121,7 +121,7 @@ class Database:
             last_error=self._row_value(row, "last_error"),
             resumed_from_job_id=self._row_value(row, "resumed_from_job_id"),
             continuation_root_job_id=self._row_value(row, "continuation_root_job_id"),
-            auto_retry_enabled=bool(auto_retry_enabled) if auto_retry_enabled is not None else False,
+            auto_retry_enabled=bool(auto_retry_enabled) if auto_retry_enabled is not None else True,
         )
 
     def upsert_job(self, job: JobRecord) -> None:

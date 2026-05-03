@@ -183,8 +183,7 @@ class JobService:
             merged.resumed_from_job_id = current_job.resumed_from_job_id
         if merged.continuation_root_job_id is None and current_job.continuation_root_job_id is not None:
             merged.continuation_root_job_id = current_job.continuation_root_job_id
-        if current_job.auto_retry_enabled:
-            merged.auto_retry_enabled = current_job.auto_retry_enabled
+        merged.auto_retry_enabled = current_job.auto_retry_enabled
 
         return merged
 

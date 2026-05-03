@@ -11,6 +11,7 @@ import type {
   EvalLogResponse,
   JobLogCacheEntry,
   JobRecord,
+  JobState,
   LogResponse,
   StatusEvent,
 } from "./types";
@@ -37,6 +38,10 @@ const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
 
 function isTimeoutJob(job: JobRecord): boolean {
   return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
+}
+
+function statusForAutoRetry(job: JobRecord): JobState {
+  return isTimeoutJob(job) ? "TIMEOUT" : job.status;
 }
 
 function createEmptyJobLogCacheEntry(jobId: string): JobLogCacheEntry {
@@ -68,6 +73,7 @@ export default function App() {
   const [updatingAutoRetryJobIds, setUpdatingAutoRetryJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
   const autoRetryAttemptedJobIds = useRef<Set<string>>(new Set());
+  const previousJobStatusesRef = useRef<Record<string, JobState>>({});
 
   useEffect(() => {
     setSelectedJob((current) => {
@@ -84,12 +90,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const previousStatuses = previousJobStatusesRef.current;
+    const nextStatuses = Object.fromEntries(jobs.map((job) => [job.job_id, statusForAutoRetry(job)])) as Record<
+      string,
+      JobState
+    >;
+    previousJobStatusesRef.current = nextStatuses;
+
     for (const group of buildJobChainGroups(jobs)) {
       const latestJob = group.summaryJob;
-      if (!latestJob.auto_retry_enabled) {
+      const previousStatus = previousStatuses[latestJob.job_id];
+      const currentStatus = statusForAutoRetry(latestJob);
+      if (previousStatus !== "RUNNING" || currentStatus !== "TIMEOUT") {
         continue;
       }
-      if (!isTimeoutJob(latestJob)) {
+      if (!latestJob.auto_retry_enabled) {
         continue;
       }
       if (updatingAutoRetryJobIds.includes(latestJob.job_id)) {

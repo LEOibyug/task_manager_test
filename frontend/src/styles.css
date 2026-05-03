@@ -260,13 +260,6 @@ select {
   accent-color: #5da2ff;
 }
 
-.compact-switch-control {
-  min-height: 1.75rem;
-  padding: 0.18rem 0.5rem 0.18rem 0.28rem;
-  font-size: 0.76rem;
-  white-space: nowrap;
-}
-
 .job-category-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -517,6 +510,95 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
+}
+
+.slide-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  color: rgba(248, 245, 236, 0.9);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.slide-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.slide-switch__track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.45rem;
+  height: 1.32rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.slide-switch__thumb {
+  position: absolute;
+  top: 50%;
+  left: 0.18rem;
+  width: 0.92rem;
+  height: 0.92rem;
+  border-radius: 999px;
+  transform: translateY(-50%);
+  background: rgba(248, 245, 236, 0.88);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.24);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.slide-switch input:checked + .slide-switch__track {
+  background: rgba(100, 249, 167, 0.24);
+  border-color: rgba(100, 249, 167, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(100, 249, 167, 0.14);
+}
+
+.slide-switch input:checked + .slide-switch__track .slide-switch__thumb {
+  transform: translate(1.08rem, -50%);
+  background: #93fcc4;
+}
+
+.slide-switch input:focus-visible + .slide-switch__track {
+  outline: 2px solid rgba(93, 162, 255, 0.8);
+  outline-offset: 2px;
+}
+
+.slide-switch:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.slide-switch__label {
+  white-space: nowrap;
+}
+
+.slide-switch--compact {
+  gap: 0.38rem;
+  font-size: 0.76rem;
+}
+
+.slide-switch--compact .slide-switch__track {
+  width: 2.05rem;
+  height: 1.08rem;
+}
+
+.slide-switch--compact .slide-switch__thumb {
+  width: 0.74rem;
+  height: 0.74rem;
+  left: 0.15rem;
+}
+
+.slide-switch--compact input:checked + .slide-switch__track .slide-switch__thumb {
+  transform: translate(0.92rem, -50%);
 }
 
 .table-actions {

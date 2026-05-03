@@ -56,7 +56,6 @@ export function JobTable({
             <th>运行时长</th>
             <th>节点</th>
             <th>时限</th>
-            <th>自动续训</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -67,7 +66,7 @@ export function JobTable({
               <Fragment key={group.chainId}>
                 {group.isChain ? (
                   <tr className="job-chain-header">
-                    <td colSpan={10}>
+                    <td colSpan={9}>
                       <div className="job-chain-summary">
                         <span>续训链 {group.chainId}</span>
                         <span>共 {group.jobs.length} 次</span>
@@ -112,6 +111,24 @@ export function JobTable({
               <td>
                 <div className="job-status-cell">
                   <StatusBadge status={isTimeoutJob(job) ? "TIMEOUT" : job.status} />
+                  <label
+                    className="slide-switch slide-switch--compact"
+                    title="开启后，该任务从运行中转为超时时会自动续训；自动产生的后继任务会继承此设置。"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={job.auto_retry_enabled}
+                      disabled={isSyncing || isCancelling || isRetrying || isDeleting || isUpdatingAutoRetry}
+                      onChange={(event) => onAutoRetryChange(job, event.target.checked)}
+                    />
+                    <span className="slide-switch__track" aria-hidden="true">
+                      <span className="slide-switch__thumb" />
+                    </span>
+                    <span className="slide-switch__label">
+                      {isUpdatingAutoRetry ? "续训保存中" : job.auto_retry_enabled ? "自动续训开" : "自动续训关"}
+                    </span>
+                  </label>
                 </div>
               </td>
               <td>{isMainAccountJob ? "主账户任务" : job.synced ? "已同步" : "未同步"}</td>
@@ -124,21 +141,6 @@ export function JobTable({
                 {!job.preferred_gpu_node && job.nodes.length === 0 ? "-" : null}
               </td>
               <td>{job.max_runtime_hours}h</td>
-              <td>
-                <label className="switch-control compact-switch-control" title="开启后，该任务超时会自动续训；自动产生的后继任务会继承此设置。">
-                  <input
-                    type="checkbox"
-                    checked={job.auto_retry_enabled}
-                    disabled={isSyncing || isCancelling || isRetrying || isDeleting || isUpdatingAutoRetry}
-                    onChange={(event) => {
-                      event.stopPropagation();
-                      onAutoRetryChange(job, event.target.checked);
-                    }}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                  <span>{isUpdatingAutoRetry ? "保存中" : job.auto_retry_enabled ? "开启" : "关闭"}</span>
-                </label>
-              </td>
               <td>
                 <div className="table-actions">
                   {showRetry ? (
