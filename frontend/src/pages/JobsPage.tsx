@@ -2,6 +2,7 @@ import { JobTable } from "../components/JobTable";
 import { LogViewer } from "../components/LogViewer";
 import { OutputTreeView } from "../components/OutputTreeView";
 import { SectionCard } from "../components/SectionCard";
+import { EvalVisualizationPanel } from "../components/EvalVisualizationPanel";
 import { useMemo, useState } from "react";
 
 import type { JobLogCacheEntry, JobRecord, JobState } from "../types";
@@ -148,7 +149,10 @@ export function JobsPage({
       </SectionCard>
       <div className="jobs-detail-grid">
         <LogViewer job={selectedJob} jobs={jobs} cacheEntry={selectedJobCache} onCacheUpdate={onUpdateJobCache} />
-        <OutputTreeView job={selectedJob} />
+        <div className="jobs-output-stack">
+          <OutputTreeView job={selectedJob} />
+          <EvalVisualizationPanel job={selectedJob} jobs={jobs} />
+        </div>
       </div>
     </div>
   );

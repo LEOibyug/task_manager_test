@@ -585,6 +585,12 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.jobs-output-stack {
+  display: grid;
+  gap: 0.85rem;
+  align-content: start;
+}
+
 .log-viewer {
   min-height: 420px;
   max-height: 68vh;
@@ -1095,6 +1101,108 @@ select {
 .output-file-card__meta p,
 .output-file-card__meta strong {
   margin: 0;
+}
+
+.eval-visual-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.9rem;
+}
+
+.eval-visual-summary span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.24rem 0.62rem;
+  border-radius: 999px;
+  background: rgba(93, 162, 255, 0.12);
+  color: #abd4ff;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.eval-chart-grid {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.eval-line-chart {
+  min-width: 0;
+  padding: 0.85rem 0.9rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.eval-line-chart__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.55rem;
+}
+
+.eval-line-chart__header strong {
+  min-width: 0;
+  color: #f4f8ff;
+  overflow-wrap: anywhere;
+}
+
+.eval-line-chart__header span {
+  flex: 0 0 auto;
+  color: rgba(225, 233, 243, 0.68);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.eval-line-chart__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+  overflow: visible;
+}
+
+.eval-line-chart__grid {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.eval-line-chart__axis,
+.eval-line-chart__tick {
+  stroke: rgba(225, 233, 243, 0.22);
+  stroke-width: 1.2;
+}
+
+.eval-line-chart__line {
+  fill: none;
+  stroke: #64f9a7;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px rgba(100, 249, 167, 0.25));
+}
+
+.eval-line-chart__point {
+  fill: #ffd37f;
+  stroke: rgba(4, 8, 16, 0.9);
+  stroke-width: 2;
+}
+
+.eval-line-chart__point-label {
+  fill: #f8f5ec;
+  font-size: 12px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(4, 8, 16, 0.95);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.eval-line-chart__axis-label {
+  fill: rgba(225, 233, 243, 0.62);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .tree-node--dir {

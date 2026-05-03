@@ -4,7 +4,7 @@ import { getJobEvalLines, getJobEvalLinesBatch, getJobLog } from "../api";
 import type { EvalLogResponse, JobLogCacheEntry, JobRecord, LogResponse } from "../types";
 import { SectionCard } from "./SectionCard";
 import { renderTerminalText } from "../utils/terminal";
-import { type EvalCardItem, parseEvalLogEntries } from "../utils/evalMetrics";
+import { dedupeEvalCardsByContent, parseEvalLogEntries } from "../utils/evalMetrics";
 import { extractProgressFromLog } from "../utils/logProgress";
 import { getJobChainMembers } from "../utils/jobChain";
 
@@ -12,15 +12,6 @@ const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
 const LOG_POLL_INTERVAL_MS = 1500;
 const EVAL_POLL_INTERVAL_MS = 8000;
 const NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN");
-
-function dedupeEvalCardsByContent(cards: EvalCardItem[]): EvalCardItem[] {
-  const deduped = new Map<string, EvalCardItem>();
-  for (const card of cards) {
-    deduped.delete(card.rawLine);
-    deduped.set(card.rawLine, card);
-  }
-  return Array.from(deduped.values());
-}
 
 export function LogViewer({
   job,
