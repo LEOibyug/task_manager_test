@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from queue import Empty, Queue
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from threading import Event as ThreadEvent
 from threading import Thread
 import time
@@ -168,11 +168,13 @@ class ParamikoFollowStream:
 
 
 class ParamikoSSHGateway:
+    MAX_CONCURRENT_CHANNELS_PER_USER = 4
+
     def __init__(self, host: str, port: int) -> None:
         self.host = host
         self.port = port
         self._clients: dict[str, "paramiko.SSHClient"] = {}
-        self._client_locks: dict[str, Lock] = {}
+        self._client_locks: dict[str, BoundedSemaphore] = {}
         self._clients_lock = Lock()
 
     def _get_client(self, username: str) -> "paramiko.SSHClient":
@@ -186,12 +188,12 @@ class ParamikoSSHGateway:
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(self.host, port=self.port, username=username, look_for_keys=True)
             self._clients[username] = client
-            self._client_locks.setdefault(username, Lock())
+            self._client_locks.setdefault(username, BoundedSemaphore(self.MAX_CONCURRENT_CHANNELS_PER_USER))
             return client
 
-    def _get_client_lock(self, username: str) -> Lock:
+    def _get_client_lock(self, username: str) -> BoundedSemaphore:
         with self._clients_lock:
-            return self._client_locks.setdefault(username, Lock())
+            return self._client_locks.setdefault(username, BoundedSemaphore(self.MAX_CONCURRENT_CHANNELS_PER_USER))
 
     def run(
         self,

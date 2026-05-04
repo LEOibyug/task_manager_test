@@ -104,7 +104,7 @@ class SchedulerService:
         await self._stop_all_log_trackers()
 
     async def trigger_refresh(self) -> None:
-        jobs = self.job_service.refresh_jobs()
+        jobs = await asyncio.to_thread(self.job_service.refresh_jobs)
         await self.sync_log_tracking(jobs.jobs)
         await self.broadcaster.broadcast(self.build_jobs_refreshed_event(jobs.jobs))
 

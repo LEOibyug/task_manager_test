@@ -60,6 +60,10 @@ class JobService:
     def _resolve_sync_state(self, config: AppConfig, job: JobRecord) -> bool:
         if job.account == config.main_username:
             return True
+        if job.synced:
+            return True
+        if job.status != "COMPLETED":
+            return False
         main_repo = config.repo_paths.get(config.main_username)
         if not main_repo:
             return False
@@ -308,11 +312,25 @@ class JobService:
                             "message": f"任务 {job_id} 当前归档状态为 {state}",
                         }
                     )
-                if self._should_collect_seff(previous, cached):
-                    seff_result = self.ssh_gateway.run(username, f"seff {job_id}", logger=logger)
-                    if seff_result.exit_code == 0:
-                        cached.resource_usage = self._parse_seff_summary(seff_result.stdout)
                 account_updates[job_id] = cached
+
+        seff_targets = [
+            (job_id, existing_jobs.get(job_id), cached)
+            for job_id, cached in account_updates.items()
+            if self._should_collect_seff(existing_jobs.get(job_id), cached)
+        ]
+        if seff_targets:
+            max_workers = min(4, len(seff_targets))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(self.ssh_gateway.run, username, f"seff {job_id}", None, logger): job_id
+                    for job_id, _previous, cached in seff_targets
+                }
+                for future in as_completed(futures):
+                    job_id = futures[future]
+                    seff_result = future.result()
+                    if seff_result.exit_code == 0 and job_id in account_updates:
+                        account_updates[job_id].resource_usage = self._parse_seff_summary(seff_result.stdout)
 
         return list(account_updates.values())
 

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 
-import { getJobEvalLinesBatch } from "../api";
-import type { EvalLogResponse, JobRecord } from "../types";
+import type { JobRecord } from "../types";
 import {
   buildEvalMetricSeries,
   dedupeEvalCardsByContent,
@@ -10,6 +9,7 @@ import {
   type EvalMetricSeries,
   parseEvalLogEntries,
 } from "../utils/evalMetrics";
+import { getChainEvalLogs, type ChainEvalLogItem } from "../utils/evalLogCache";
 import { getJobChainMembers } from "../utils/jobChain";
 import { SectionCard } from "./SectionCard";
 
@@ -299,9 +299,7 @@ function CombinedEvalChart({ series, totalEvalCount }: { series: EvalMetricSerie
 }
 
 export function EvalVisualizationPanel({ job, jobs }: { job: JobRecord | null; jobs: JobRecord[] }) {
-  const [responses, setResponses] = useState<
-    Array<{ jobId: string; trainingIndex: number; trainingTotal: number; response: EvalLogResponse }>
-  >([]);
+  const [responses, setResponses] = useState<ChainEvalLogItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const isTrackable = job ? TRACKABLE_JOB_STATUSES.has(job.status) : false;
@@ -326,7 +324,7 @@ export function EvalVisualizationPanel({ job, jobs }: { job: JobRecord | null; j
   }, [responses]);
   const series = useMemo(() => buildEvalMetricSeries(evalCards), [evalCards]);
 
-  async function refreshEvalCharts(signal?: AbortSignal, silent = false) {
+  async function refreshEvalCharts(signal?: AbortSignal, silent = false, force = false) {
     if (!job || evalJobs.length === 0) {
       setResponses([]);
       return;
@@ -335,26 +333,11 @@ export function EvalVisualizationPanel({ job, jobs }: { job: JobRecord | null; j
       if (!silent) {
         setIsLoading(true);
       }
-      const nextResponses = await getJobEvalLinesBatch(
-        evalJobs.map((item) => item.job_id),
-        {
-          pattern: "latest_eval=",
-          limit: 0,
-          signal,
-        },
-      );
+      const nextResponses = await getChainEvalLogs(evalJobs, { force, signal });
       if (signal?.aborted) {
         return;
       }
-      const trainingTotal = evalJobs.length;
-      setResponses(
-        nextResponses.map((response, index) => ({
-          jobId: evalJobs[index]?.job_id ?? response.job_id,
-          trainingIndex: index + 1,
-          trainingTotal,
-          response,
-        })),
-      );
+      setResponses(nextResponses);
       setError(null);
     } catch (err) {
       if ((err as Error).name === "AbortError") {
@@ -382,7 +365,7 @@ export function EvalVisualizationPanel({ job, jobs }: { job: JobRecord | null; j
     }
     const timer = window.setInterval(() => {
       const controller = new AbortController();
-      void refreshEvalCharts(controller.signal, true);
+      void refreshEvalCharts(controller.signal, true, false);
     }, EVAL_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [job?.job_id, evalJobIds, isTrackable]);
@@ -391,7 +374,7 @@ export function EvalVisualizationPanel({ job, jobs }: { job: JobRecord | null; j
     <SectionCard
       title="评估可视化"
       actions={
-        <button className="ghost-button" onClick={() => void refreshEvalCharts()} disabled={!job || isLoading}>
+        <button className="ghost-button" onClick={() => void refreshEvalCharts(undefined, false, true)} disabled={!job || isLoading}>
           {isLoading ? "读取中" : "刷新"}
         </button>
       }

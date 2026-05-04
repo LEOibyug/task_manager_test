@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getJobEvalLines, getJobEvalLinesBatch, getJobLog } from "../api";
+import { getJobLog } from "../api";
 import type { EvalLogResponse, JobLogCacheEntry, JobRecord, LogResponse } from "../types";
 import { SectionCard } from "./SectionCard";
 import { renderTerminalText } from "../utils/terminal";
 import { dedupeEvalCardsByContent, parseEvalLogEntries } from "../utils/evalMetrics";
 import { extractProgressFromLog } from "../utils/logProgress";
 import { getJobChainMembers } from "../utils/jobChain";
+import { getChainEvalLogs, type ChainEvalLogItem } from "../utils/evalLogCache";
 
 const TRACKABLE_JOB_STATUSES = new Set(["RUNNING", "PENDING"]);
 const LOG_POLL_INTERVAL_MS = 1500;
@@ -26,9 +27,7 @@ export function LogViewer({
 }) {
   const [log, setLog] = useState<LogResponse | null>(null);
   const [evalLog, setEvalLog] = useState<EvalLogResponse | null>(null);
-  const [chainEvalLogs, setChainEvalLogs] = useState<
-    Array<{ jobId: string; trainingIndex: number; trainingTotal: number; response: EvalLogResponse }>
-  >([]);
+  const [chainEvalLogs, setChainEvalLogs] = useState<ChainEvalLogItem[]>([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [evalError, setEvalError] = useState<string | null>(null);
@@ -215,7 +214,7 @@ export function LogViewer({
     }
   }
 
-  async function refreshEvalLog(silent = false) {
+  async function refreshEvalLog(silent = false, force = false) {
     if (!job || isEvalRequestInFlightRef.current) {
       return;
     }
@@ -223,23 +222,16 @@ export function LogViewer({
     evalRequestControllerRef.current = controller;
     isEvalRequestInFlightRef.current = true;
     try {
-      const responses = await getJobEvalLinesBatch(evalJobs.map((item) => item.job_id), {
-        pattern: "latest_eval=",
-        limit: 0,
+      const nextChainEvalLogs = await getChainEvalLogs(evalJobs, {
+        force,
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
         return;
       }
       const trainingTotal = evalJobs.length;
-      const nextChainEvalLogs = responses.map((response, index) => ({
-        jobId: evalJobs[index]?.job_id ?? response.job_id,
-        trainingIndex: index + 1,
-        trainingTotal,
-        response,
-      }));
       setChainEvalLogs(trainingTotal > 1 ? nextChainEvalLogs : []);
-      const next = responses[responses.length - 1] ?? null;
+      const next = nextChainEvalLogs[nextChainEvalLogs.length - 1]?.response ?? null;
       setEvalLog(next);
       const updatedAt = Date.now();
       if (trainingTotal === 1 && next) {
@@ -336,7 +328,7 @@ export function LogViewer({
         <>
           <div className="log-collapse-toolbar">
             <strong className="log-section-label">评估</strong>
-            <button className="ghost-button" onClick={() => void refreshEvalLog()} disabled={!job}>
+            <button className="ghost-button" onClick={() => void refreshEvalLog(false, true)} disabled={!job}>
               刷新
             </button>
           </div>
