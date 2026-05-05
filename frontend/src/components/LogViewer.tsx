@@ -14,6 +14,42 @@ const LOG_POLL_INTERVAL_MS = 1500;
 const EVAL_POLL_INTERVAL_MS = 8000;
 const NUMBER_FORMATTER = new Intl.NumberFormat("zh-CN");
 
+function formatEvalMetricKey(key: string): string {
+  return key.replace(/^ads\//, "");
+}
+
+function parseEvalMetricNumber(value: string): number | null {
+  const normalized = value.replace(/,/g, "").trim();
+  const match = normalized.match(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseFloat(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatMeanDelta(currentValue: string, previousValue: string | undefined): string | null {
+  if (previousValue === undefined) {
+    return null;
+  }
+  const current = parseEvalMetricNumber(currentValue);
+  const previous = parseEvalMetricNumber(previousValue);
+  if (current === null || previous === null) {
+    return null;
+  }
+  const delta = current - previous;
+  const formatted = new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 4,
+  }).format(Math.abs(delta));
+  if (delta > 0) {
+    return `+${formatted}`;
+  }
+  if (delta < 0) {
+    return `-${formatted}`;
+  }
+  return "0";
+}
+
 export function LogViewer({
   job,
   jobs,
@@ -336,7 +372,7 @@ export function LogViewer({
             <div className="eval-list__row eval-list__row--header" role="row">
               <span role="columnheader">评估</span>
               <span role="columnheader">训练</span>
-              <span role="columnheader">指标</span>
+              <span role="columnheader">指标（ads/）</span>
             </div>
             {evalCards.map((card, index) => (
               <div key={card.id} className="eval-list__row" role="row" title={card.rawLine}>
@@ -346,19 +382,28 @@ export function LogViewer({
                 </span>
                 <div className="eval-list__metrics" role="cell">
                   {card.prefix ? <span className="eval-list__prefix">{card.prefix}</span> : null}
-                  {card.metrics.map((metric) => (
-                    <span
-                      key={`${card.id}-${metric.key}`}
-                      className={
-                        metric.key === "ads/mean"
-                          ? "eval-list__metric eval-list__metric--highlight"
-                          : "eval-list__metric"
-                      }
-                    >
-                      <span>{metric.key}</span>
-                      <strong>{metric.value}</strong>
-                    </span>
-                  ))}
+                  {card.metrics.map((metric) => {
+                    const previousMeanValue = evalCards[index - 1]?.metrics.find((item) => item.key === "ads/mean")?.value;
+                    const meanDelta = metric.key === "ads/mean" ? formatMeanDelta(metric.value, previousMeanValue) : null;
+                    return (
+                      <span
+                        key={`${card.id}-${metric.key}`}
+                        className={
+                          metric.key === "ads/mean"
+                            ? "eval-list__metric eval-list__metric--highlight"
+                            : "eval-list__metric"
+                        }
+                      >
+                        <span>{formatEvalMetricKey(metric.key)}</span>
+                        <strong>{metric.value}</strong>
+                        {meanDelta ? (
+                          <em className={`eval-list__delta ${meanDelta.startsWith("+") ? "eval-list__delta--up" : meanDelta.startsWith("-") ? "eval-list__delta--down" : ""}`}>
+                            {meanDelta}
+                          </em>
+                        ) : null}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             ))}

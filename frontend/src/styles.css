@@ -932,12 +932,15 @@ select {
 .eval-list__metrics {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.32rem 0.46rem;
+  overflow-x: auto;
+  padding-bottom: 0.08rem;
+  white-space: nowrap;
 }
 
 .eval-list__prefix {
-  flex-basis: 100%;
+  flex: 0 0 auto;
   color: rgba(225, 233, 243, 0.62);
   font-size: 0.8rem;
   overflow-wrap: anywhere;
@@ -945,7 +948,8 @@ select {
 
 .eval-list__metric {
   display: inline-flex;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
   align-items: baseline;
   gap: 0.3rem;
   padding: 0.16rem 0.42rem;
@@ -975,6 +979,20 @@ select {
 
 .eval-list__metric--highlight strong {
   color: #ffd37f;
+}
+
+.eval-list__delta {
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.eval-list__delta--up {
+  color: #ff8f8f;
+}
+
+.eval-list__delta--down {
+  color: #93fcc4;
 }
 
 .active-log-button {
