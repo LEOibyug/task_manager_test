@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { cancelJob, clearJobs, deleteJob, getConfig, listJobs, refreshJobs, retryJob, setJobAutoRetry, syncJob } from "./api";
+import {
+  cancelJob,
+  clearJobs,
+  deleteJob,
+  getConfig,
+  listJobs,
+  proactiveRetryJob,
+  refreshJobs,
+  retryJob,
+  setJobAutoRetry,
+  syncJob,
+} from "./api";
 import { OperationConsole } from "./components/OperationConsole";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ExperimentsPage } from "./pages/ExperimentsPage";
@@ -69,6 +80,7 @@ export default function App() {
   const [syncingJobIds, setSyncingJobIds] = useState<string[]>([]);
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
   const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
+  const [proactiveRetryingJobIds, setProactiveRetryingJobIds] = useState<string[]>([]);
   const [deletingJobIds, setDeletingJobIds] = useState<string[]>([]);
   const [updatingAutoRetryJobIds, setUpdatingAutoRetryJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
@@ -335,6 +347,31 @@ export default function App() {
     }
   }
 
+  async function handleProactiveRetry(job: JobRecord) {
+    const confirmed = window.confirm(
+      `确定对运行中任务 ${job.job_id} 执行主动续训吗？\n\n这会先停止当前 Slurm 任务，将旧任务标记为主动超时，然后按续训链逻辑提交新的后继任务。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    setProactiveRetryingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      await withPendingRequest("主动续训", `任务 ${job.job_id} 正在主动停止，并将提交续训后继任务。`, async () => {
+        const response = await proactiveRetryJob(job.job_id);
+        const nextJobs = await listJobs();
+        setJobs(nextJobs.jobs);
+        const nextSelected = nextJobs.jobs.find((item) => item.job_id === response.job.job_id) ?? null;
+        if (nextSelected) {
+          setSelectedJob(nextSelected);
+        }
+      });
+    } catch (error) {
+      setBanner(`主动续训失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setProactiveRetryingJobIds((current) => current.filter((item) => item !== job.job_id));
+    }
+  }
+
   async function handleJobAutoRetryChange(job: JobRecord, enabled: boolean) {
     setUpdatingAutoRetryJobIds((current) => Array.from(new Set([...current, job.job_id])));
     const previousJobs = jobs;
@@ -411,6 +448,7 @@ export default function App() {
           onSync={handleSync}
           onCancel={handleCancel}
           onRetry={handleRetry}
+          onProactiveRetry={handleProactiveRetry}
           onDelete={handleDeleteJob}
           onAutoRetryChange={handleJobAutoRetryChange}
           isRefreshing={isRefreshingJobs}
@@ -418,6 +456,7 @@ export default function App() {
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
+          proactiveRetryingJobIds={proactiveRetryingJobIds}
           deletingJobIds={deletingJobIds}
           updatingAutoRetryJobIds={updatingAutoRetryJobIds}
         />

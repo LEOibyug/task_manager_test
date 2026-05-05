@@ -205,6 +205,26 @@ async def retry_job(job_id: str, container: AppContainer = Depends(get_container
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/jobs/{job_id}/proactive-retry", response_model=SubmitJobResponse)
+async def proactive_retry_job(job_id: str, container: AppContainer = Depends(get_container)) -> SubmitJobResponse:
+    loop = asyncio.get_running_loop()
+    operation_id, logger = build_command_logger(container, loop, "job-proactive-retry")
+    logger({"stage": "operation_start", "message": f"正在主动停止任务 {job_id} 并提交续训任务"})
+    try:
+        job = await run_in_threadpool(container.job_service.proactive_retry_job, job_id, logger)
+        logger({"stage": "operation_end", "message": f"主动续训任务 {job.job_id} 已提交到 {job.account}"})
+        jobs_result = await run_in_threadpool(container.job_service.list_jobs)
+        asyncio.create_task(
+            container.broadcaster.broadcast(
+                container.scheduler.build_jobs_refreshed_event(jobs_result.jobs)
+            )
+        )
+        return SubmitJobResponse(job=job, message=f"主动续训任务 {job.job_id} 已提交到 {job.account}（操作 {operation_id}）")
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.patch("/jobs/{job_id}/auto-retry", response_model=RefreshJobsResponse)
 async def update_job_auto_retry(
     job_id: str,

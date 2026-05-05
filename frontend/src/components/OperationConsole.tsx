@@ -13,6 +13,7 @@ function formatAction(action: string): string {
     "connection-test": "连接测试",
     "job-submit": "任务提交",
     "job-retry": "续训任务",
+    "job-proactive-retry": "主动续训",
     "job-cancel": "取消任务",
     "job-sync": "同步结果",
     "jobs-refresh": "刷新任务",

@@ -146,6 +146,10 @@ class JobService:
     def _is_timeout_job(self, job: JobRecord) -> bool:
         return job.status == "TIMEOUT" or bool(job.last_error and "TIMEOUT" in job.last_error)
 
+    def _is_proactive_timeout_job(self, job: JobRecord) -> bool:
+        marker = (job.last_error or "").upper()
+        return job.status == "TIMEOUT" and ("ACTIVE_TIMEOUT" in marker or "主动超时" in marker)
+
     def _clone_job(self, job: JobRecord) -> JobRecord:
         return job.model_copy(deep=True)
 
@@ -188,6 +192,9 @@ class JobService:
         if merged.continuation_root_job_id is None and current_job.continuation_root_job_id is not None:
             merged.continuation_root_job_id = current_job.continuation_root_job_id
         merged.auto_retry_enabled = current_job.auto_retry_enabled
+        if self._is_proactive_timeout_job(current_job) and merged.status in {"RUNNING", "PENDING", "CANCELLED", "UNKNOWN"}:
+            merged.status = "TIMEOUT"
+            merged.last_error = current_job.last_error
 
         return merged
 
@@ -347,6 +354,7 @@ class JobService:
         request: SubmitJobRequest,
         logger: CommandLogger | None = None,
         resumed_from_job: JobRecord | None = None,
+        active_job_allowance: int = 0,
     ) -> JobRecord:
         config = self.config_service.load()
         repo_path = self._repo_path(config, request.account)
@@ -360,7 +368,8 @@ class JobService:
                 }
             )
         active_jobs = self._count_active_jobs(request.account, logger=logger)
-        if active_jobs >= 2:
+        effective_active_jobs = max(0, active_jobs - max(0, active_job_allowance))
+        if effective_active_jobs >= 2:
             raise SSHError(f"Account {request.account} already has {active_jobs} active jobs.")
 
         if request.account != config.main_username:
@@ -472,6 +481,47 @@ class JobService:
             auto_retry_enabled=job.auto_retry_enabled,
         )
         return self.submit_job(retry_request, logger=logger, resumed_from_job=job)
+
+    def proactive_retry_job(self, job_id: str, logger: CommandLogger | None = None) -> JobRecord:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        if job.status != "RUNNING":
+            raise SSHError(f"Job {job_id} is not running and cannot be proactively resumed.")
+        self.normalize_job_record(job)
+        if logger is not None:
+            logger(
+                {
+                    "stage": "stdout",
+                    "username": job.account,
+                    "message": f"正在主动停止运行中任务 {job_id}，随后提交续训任务",
+                }
+            )
+        self._ensure_ok(
+            self.ssh_gateway.run(job.account, f"scancel {job_id}", logger=logger),
+            "scancel",
+        )
+        if not job.continuation_root_job_id:
+            job.continuation_root_job_id = job.job_id
+        job.status = "TIMEOUT"
+        job.last_error = "ACTIVE_TIMEOUT 主动超时：已主动停止，正在提交续训任务"
+        self.database.upsert_job(job)
+        retry_request = SubmitJobRequest(
+            experiment_name=job.experiment,
+            script_path=job.script_path,
+            account=job.account,
+            preferred_gpu_node=job.preferred_gpu_node or (job.nodes[0] if job.nodes else None),
+            auto_retry_enabled=job.auto_retry_enabled,
+        )
+        new_job = self.submit_job(
+            retry_request,
+            logger=logger,
+            resumed_from_job=job,
+            active_job_allowance=1,
+        )
+        job.last_error = f"ACTIVE_TIMEOUT 主动超时：已主动停止并提交续训任务 {new_job.job_id}"
+        self.database.upsert_job(job)
+        return new_job
 
     def set_job_auto_retry(self, job_id: str, enabled: bool) -> JobListResponse:
         job = self.database.get_job(job_id)

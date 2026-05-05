@@ -525,6 +525,108 @@ class JobServiceTestCase(unittest.TestCase):
         original_job = self.database.get_job("60001")
         self.assertEqual(original_job.continuation_root_job_id, "60001")
 
+    def test_proactive_retry_running_job_marks_old_job_and_creates_continuation(self) -> None:
+        files = {
+            "worker1": {
+                "/srv/worker1/repo/experiments/exp001/train.sbatch": "#SBATCH -o logs/train.out\n#SBATCH -J runA\n",
+            }
+        }
+        commands = {
+            ("worker1", "::scancel 62001"): CommandResult(
+                command="scancel",
+                stdout="",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%T\""): CommandResult(
+                command="squeue",
+                stdout="RUNNING\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::git rev-parse --abbrev-ref HEAD"): CommandResult(
+                command="git rev-parse",
+                stdout="main\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::git pull origin main"): CommandResult(
+                command="git pull",
+                stdout="Already up to date.\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "/srv/worker1/repo::sbatch -w gpu2 experiments/exp001/train.sbatch"): CommandResult(
+                command="sbatch",
+                stdout="Submitted batch job 62002\n",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(files=files, commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="62001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                preferred_gpu_node="gpu2",
+                status="RUNNING",
+                auto_retry_enabled=True,
+            )
+        )
+
+        new_job = service.proactive_retry_job("62001")
+
+        self.assertEqual(new_job.job_id, "62002")
+        self.assertEqual(new_job.resumed_from_job_id, "62001")
+        self.assertEqual(new_job.continuation_root_job_id, "62001")
+        original_job = self.database.get_job("62001")
+        self.assertEqual(original_job.status, "TIMEOUT")
+        self.assertIn("主动超时", original_job.last_error)
+        self.assertEqual(original_job.continuation_root_job_id, "62001")
+
+    def test_refresh_preserves_proactive_timeout_when_slurm_reports_cancelled(self) -> None:
+        commands = {
+            ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(
+                command="squeue",
+                stdout="",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::sacct -j \"62003\" --format=JobID,State,Elapsed -n -P"): CommandResult(
+                command="sacct",
+                stdout="62003|CANCELLED by 1000|01:23:45\n",
+                stderr="",
+                exit_code=0,
+            ),
+            ("worker1", "::seff 62003"): CommandResult(
+                command="seff",
+                stdout="Job ID: 62003\n",
+                stderr="",
+                exit_code=0,
+            ),
+        }
+        gateway = InMemorySSHGateway(commands=commands)
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="62003",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="TIMEOUT",
+                last_error="ACTIVE_TIMEOUT 主动超时：已主动停止并提交续训任务",
+            )
+        )
+
+        jobs = service.refresh_jobs().jobs
+
+        self.assertEqual(jobs[0].status, "TIMEOUT")
+        self.assertIn("主动超时", jobs[0].last_error)
+        self.assertEqual(jobs[0].runtime, "01:23:45")
+
     def test_set_job_auto_retry_updates_existing_job(self) -> None:
         gateway = InMemorySSHGateway()
         service = JobService(self.config_service, gateway, self.database)

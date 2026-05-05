@@ -12,11 +12,13 @@ interface JobTableProps {
   onSync: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
+  onProactiveRetry: (job: JobRecord) => void;
   onDelete: (job: JobRecord) => void;
   onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   syncingJobIds: string[];
   cancellingJobIds: string[];
   retryingJobIds: string[];
+  proactiveRetryingJobIds: string[];
   deletingJobIds: string[];
   updatingAutoRetryJobIds: string[];
 }
@@ -29,16 +31,23 @@ export function JobTable({
   onSync,
   onCancel,
   onRetry,
+  onProactiveRetry,
   onDelete,
   onAutoRetryChange,
   syncingJobIds,
   cancellingJobIds,
   retryingJobIds,
+  proactiveRetryingJobIds,
   deletingJobIds,
   updatingAutoRetryJobIds,
 }: JobTableProps) {
   function isTimeoutJob(job: JobRecord) {
     return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
+  }
+
+  function isProactiveTimeoutJob(job: JobRecord) {
+    const marker = job.last_error ?? "";
+    return job.status === "TIMEOUT" && (marker.includes("主动超时") || marker.toUpperCase().includes("ACTIVE_TIMEOUT"));
   }
 
   const chainGroups = buildJobChainGroups(jobs);
@@ -79,11 +88,14 @@ export function JobTable({
             const isSyncing = syncingJobIds.includes(job.job_id);
             const isCancelling = cancellingJobIds.includes(job.job_id);
             const isRetrying = retryingJobIds.includes(job.job_id);
+            const isProactiveRetrying = proactiveRetryingJobIds.includes(job.job_id);
             const isDeleting = deletingJobIds.includes(job.job_id);
             const isUpdatingAutoRetry = updatingAutoRetryJobIds.includes(job.job_id);
             const isMainAccountJob = job.account === mainUsername;
             const canRetry = isTimeoutJob(job) && group.summaryJob.job_id === job.job_id;
+            const canProactiveRetry = job.status === "RUNNING" && group.summaryJob.job_id === job.job_id;
             const showRetry = canRetry || isRetrying;
+            const showProactiveRetry = canProactiveRetry || isProactiveRetrying;
             const chainIndex = chronologicalJobs.findIndex((item) => item.job_id === job.job_id) + 1;
             const previousJob = chronologicalJobs[chainIndex - 2] ?? null;
             return (
@@ -111,6 +123,7 @@ export function JobTable({
               <td>
                 <div className="job-status-cell">
                   <StatusBadge status={isTimeoutJob(job) ? "TIMEOUT" : job.status} />
+                  {isProactiveTimeoutJob(job) ? <div className="job-subnote">主动超时</div> : null}
                   <label
                     className="slide-switch slide-switch--compact"
                     title="开启后，该任务从运行中转为超时时会自动续训；自动产生的后继任务会继承此设置。"
@@ -119,7 +132,7 @@ export function JobTable({
                     <input
                       type="checkbox"
                       checked={job.auto_retry_enabled}
-                      disabled={isSyncing || isCancelling || isRetrying || isDeleting || isUpdatingAutoRetry}
+                      disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting || isUpdatingAutoRetry}
                       onChange={(event) => onAutoRetryChange(job, event.target.checked)}
                     />
                     <span className="slide-switch__track" aria-hidden="true">
@@ -146,7 +159,7 @@ export function JobTable({
                   {showRetry ? (
                     <button
                       className="ghost-button compact-action-button"
-                      disabled={!canRetry || isSyncing || isCancelling || isRetrying || isDeleting}
+                      disabled={!canRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onRetry(job);
@@ -155,10 +168,23 @@ export function JobTable({
                       {isRetrying ? "续训中..." : "续训"}
                     </button>
                   ) : null}
+                  {showProactiveRetry ? (
+                    <button
+                      className="ghost-button compact-action-button"
+                      title="先主动停止当前运行任务，并以续训链逻辑提交新任务。"
+                      disabled={!canProactiveRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onProactiveRetry(job);
+                      }}
+                    >
+                      {isProactiveRetrying ? "主动续训中..." : "主动续训"}
+                    </button>
+                  ) : null}
                   {!isMainAccountJob ? (
                     <button
                       className="ghost-button compact-action-button"
-                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isDeleting}
+                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onSync(job);
@@ -169,7 +195,7 @@ export function JobTable({
                   ) : null}
                   <button
                     className="ghost-button danger-button compact-action-button"
-                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isDeleting}
+                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(job);
@@ -179,7 +205,7 @@ export function JobTable({
                   </button>
                   <button
                     className="ghost-button danger-button compact-action-button"
-                    disabled={isSyncing || isCancelling || isRetrying || isDeleting}
+                    disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
                       onDelete(job);

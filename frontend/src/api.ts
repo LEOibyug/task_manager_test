@@ -173,3 +173,7 @@ export async function cancelJob(jobId: string): Promise<CancelJobResponse> {
 export async function retryJob(jobId: string): Promise<{ job: { job_id: string }; message: string }> {
   return requestJson<{ job: { job_id: string }; message: string }>(`/api/jobs/${jobId}/retry`, { method: "POST" });
 }
+
+export async function proactiveRetryJob(jobId: string): Promise<{ job: { job_id: string }; message: string }> {
+  return requestJson<{ job: { job_id: string }; message: string }>(`/api/jobs/${jobId}/proactive-retry`, { method: "POST" });
+}
