@@ -336,7 +336,6 @@ export function LogViewer({
             <div className="eval-list__row eval-list__row--header" role="row">
               <span role="columnheader">评估</span>
               <span role="columnheader">训练</span>
-              <span role="columnheader">日志行</span>
               <span role="columnheader">指标</span>
             </div>
             {evalCards.map((card, index) => (
@@ -345,11 +344,17 @@ export function LogViewer({
                 <span role="cell">
                   {card.trainingIndex && card.trainingTotal ? `${card.trainingIndex}/${card.trainingTotal}` : "-"}
                 </span>
-                <span role="cell">{card.lineNumber ? `#${card.lineNumber}` : "-"}</span>
                 <div className="eval-list__metrics" role="cell">
                   {card.prefix ? <span className="eval-list__prefix">{card.prefix}</span> : null}
                   {card.metrics.map((metric) => (
-                    <span key={`${card.id}-${metric.key}`} className="eval-list__metric">
+                    <span
+                      key={`${card.id}-${metric.key}`}
+                      className={
+                        metric.key === "ads/mean"
+                          ? "eval-list__metric eval-list__metric--highlight"
+                          : "eval-list__metric"
+                      }
+                    >
                       <span>{metric.key}</span>
                       <strong>{metric.value}</strong>
                     </span>

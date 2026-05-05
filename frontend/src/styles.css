@@ -899,7 +899,7 @@ select {
 
 .eval-list__row {
   display: grid;
-  grid-template-columns: 4rem 4.8rem 5.2rem minmax(0, 1fr);
+  grid-template-columns: 4rem 4.8rem minmax(0, 1fr);
   gap: 0.6rem;
   align-items: start;
   padding: 0.44rem 0.65rem;
@@ -961,6 +961,20 @@ select {
 
 .eval-list__metric strong {
   color: #93fcc4;
+}
+
+.eval-list__metric--highlight {
+  background: rgba(255, 211, 127, 0.18);
+  border: 1px solid rgba(255, 211, 127, 0.34);
+  box-shadow: 0 0 0 1px rgba(255, 211, 127, 0.08), 0 0 16px rgba(255, 211, 127, 0.12);
+}
+
+.eval-list__metric--highlight span {
+  color: #ffe3a3;
+}
+
+.eval-list__metric--highlight strong {
+  color: #ffd37f;
 }
 
 .active-log-button {
@@ -1522,7 +1536,7 @@ select {
   }
 
   .eval-list__row {
-    min-width: 620px;
+    min-width: 540px;
   }
 
   .operation-dock {
