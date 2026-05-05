@@ -332,28 +332,30 @@ export function LogViewer({
               刷新
             </button>
           </div>
-          <div className="eval-card-grid">
+          <div className="eval-list" role="table" aria-label="评估结果列表">
+            <div className="eval-list__row eval-list__row--header" role="row">
+              <span role="columnheader">评估</span>
+              <span role="columnheader">训练</span>
+              <span role="columnheader">日志行</span>
+              <span role="columnheader">指标</span>
+            </div>
             {evalCards.map((card, index) => (
-              <article key={card.id} className="eval-card" title={card.rawLine}>
-                <div className="eval-card__header">
-                  <strong>评估 #{index + 1}</strong>
-                  <div className="eval-card__tags">
-                    {card.trainingIndex && card.trainingTotal ? (
-                      <span>第 {card.trainingIndex}/{card.trainingTotal} 次训练</span>
-                    ) : null}
-                    {card.lineNumber ? <span>日志 #{card.lineNumber}</span> : null}
-                  </div>
-                </div>
-                {card.prefix ? <p className="eval-card__prefix">{card.prefix}</p> : null}
-                <div className="eval-card__metrics">
+              <div key={card.id} className="eval-list__row" role="row" title={card.rawLine}>
+                <strong role="cell">#{index + 1}</strong>
+                <span role="cell">
+                  {card.trainingIndex && card.trainingTotal ? `${card.trainingIndex}/${card.trainingTotal}` : "-"}
+                </span>
+                <span role="cell">{card.lineNumber ? `#${card.lineNumber}` : "-"}</span>
+                <div className="eval-list__metrics" role="cell">
+                  {card.prefix ? <span className="eval-list__prefix">{card.prefix}</span> : null}
                   {card.metrics.map((metric) => (
-                    <div key={`${card.id}-${metric.key}`} className="eval-metric-pill">
+                    <span key={`${card.id}-${metric.key}`} className="eval-list__metric">
                       <span>{metric.key}</span>
                       <strong>{metric.value}</strong>
-                    </div>
+                    </span>
                   ))}
                 </div>
-              </article>
+              </div>
             ))}
           </div>
         </>

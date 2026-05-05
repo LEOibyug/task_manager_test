@@ -891,6 +891,78 @@ select {
   font-size: 0.96rem;
 }
 
+.eval-list {
+  display: grid;
+  gap: 0.28rem;
+  margin-bottom: 0.85rem;
+}
+
+.eval-list__row {
+  display: grid;
+  grid-template-columns: 4rem 4.8rem 5.2rem minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+  padding: 0.44rem 0.65rem;
+  border-radius: 12px;
+  background: rgba(100, 249, 167, 0.055);
+  border: 1px solid rgba(100, 249, 167, 0.12);
+}
+
+.eval-list__row--header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(23, 31, 47, 0.96);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(225, 233, 243, 0.68);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.eval-list__row > strong {
+  color: #f4f8ff;
+}
+
+.eval-list__row > span {
+  color: rgba(225, 233, 243, 0.72);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.eval-list__metrics {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.32rem 0.46rem;
+}
+
+.eval-list__prefix {
+  flex-basis: 100%;
+  color: rgba(225, 233, 243, 0.62);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.eval-list__metric {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.16rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.82rem;
+}
+
+.eval-list__metric span {
+  color: rgba(225, 233, 243, 0.72);
+  overflow-wrap: anywhere;
+}
+
+.eval-list__metric strong {
+  color: #93fcc4;
+}
+
 .active-log-button {
   border-color: rgba(100, 249, 167, 0.3);
   color: #93fcc4;
@@ -1443,6 +1515,14 @@ select {
 
   .log-toolbar__buttons {
     justify-content: flex-start;
+  }
+
+  .eval-list {
+    overflow-x: auto;
+  }
+
+  .eval-list__row {
+    min-width: 620px;
   }
 
   .operation-dock {
