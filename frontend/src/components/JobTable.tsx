@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import type { DragEvent } from "react";
 
 import type { JobRecord } from "../types";
-import { buildJobChainGroups } from "../utils/jobChain";
+import { buildJobChainGroups, getJobChainId } from "../utils/jobChain";
 import { StatusBadge } from "./StatusBadge";
 
 interface JobTableProps {
@@ -16,6 +16,7 @@ interface JobTableProps {
   onProactiveRetry: (job: JobRecord) => void;
   onInsertIntoChain: (job: JobRecord) => void;
   onReorderChain: (targetChainId: string, displayOrderedJobIds: string[]) => void;
+  onDetachFromChain: (job: JobRecord) => void;
   onDelete: (job: JobRecord) => void;
   onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   syncingJobIds: string[];
@@ -38,6 +39,7 @@ export function JobTable({
   onProactiveRetry,
   onInsertIntoChain,
   onReorderChain,
+  onDetachFromChain,
   onDelete,
   onAutoRetryChange,
   syncingJobIds,
@@ -76,6 +78,18 @@ export function JobTable({
       : nextIds;
   }
 
+  function findGroupIdForJob(jobId: string | null): string | null {
+    if (!jobId) {
+      return null;
+    }
+    return chainGroups.find((group) => group.jobs.some((job) => job.job_id === jobId))?.chainId ?? null;
+  }
+
+  function isJobGrouped(job: JobRecord): boolean {
+    const group = chainGroups.find((item) => item.chainId === getJobChainId(job));
+    return Boolean(group?.isChain || job.continuation_root_job_id);
+  }
+
   function handleDropIntoGroup(
     event: DragEvent,
     group: ReturnType<typeof buildJobChainGroups>[number],
@@ -90,6 +104,10 @@ export function JobTable({
     if (!draggedJob) {
       return;
     }
+    const sourceGroupId = findGroupIdForJob(draggedJob.job_id);
+    if (targetJob && sourceGroupId !== group.chainId) {
+      return;
+    }
     const nextOrder = buildDropOrder(group.jobs, draggedJob, targetJob);
     if (!nextOrder) {
       return;
@@ -98,9 +116,51 @@ export function JobTable({
   }
 
   const chainGroups = buildJobChainGroups(jobs);
+  const draggedJob = draggedJobId ? jobs.find((item) => item.job_id === draggedJobId) ?? null : null;
+  const showDetachZone = Boolean(draggedJob && isJobGrouped(draggedJob));
+
+  function handleDetachDrop(event: DragEvent) {
+    event.preventDefault();
+    const sourceJobId = event.dataTransfer.getData("text/plain") || draggedJobId;
+    const sourceJob = jobs.find((item) => item.job_id === sourceJobId);
+    setDragOverJobId(null);
+    setDragOverChainId(null);
+    setDraggedJobId(null);
+    if (sourceJob && isJobGrouped(sourceJob)) {
+      onDetachFromChain(sourceJob);
+    }
+  }
+
+  function renderDetachZone(position: "top" | "bottom") {
+    if (!showDetachZone) {
+      return null;
+    }
+    return (
+      <div
+        className={[
+          "chain-detach-zone",
+          `chain-detach-zone--${position}`,
+          dragOverChainId === "__detach__" ? "is-drag-over" : "",
+        ].filter(Boolean).join(" ")}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDragOverChainId("__detach__");
+          setDragOverJobId(null);
+        }}
+        onDragLeave={() => setDragOverChainId(null)}
+        onDrop={handleDetachDrop}
+      >
+        <strong>{position === "top" ? "移出续训链" : "放到列表外，作为独立任务"}</strong>
+        <span>出组请拖到这里；入组请拖到链条标题；同链任务行仅用于调整顺序。</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="table-shell">
+    <div className="job-table-shell">
+      {renderDetachZone("top")}
+      <div className="table-shell">
       <table className="job-table">
         <thead>
           <tr>
@@ -129,6 +189,10 @@ export function JobTable({
                     ].filter(Boolean).join(" ")}
                     onDragOver={(event) => {
                       if (!draggedJobId) {
+                        return;
+                      }
+                      const sourceGroupId = findGroupIdForJob(draggedJobId);
+                      if (sourceGroupId !== group.chainId && !group.isChain) {
                         return;
                       }
                       event.preventDefault();
@@ -189,6 +253,9 @@ export function JobTable({
               }}
               onDragOver={(event) => {
                 if (!draggedJobId || draggedJobId === job.job_id) {
+                  return;
+                }
+                if (findGroupIdForJob(draggedJobId) !== group.chainId) {
                   return;
                 }
                 event.preventDefault();
@@ -326,6 +393,8 @@ export function JobTable({
           })}
         </tbody>
       </table>
+      </div>
+      {renderDetachZone("bottom")}
     </div>
   );
 }

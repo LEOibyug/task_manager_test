@@ -171,6 +171,18 @@ class JobService:
         sorted_jobs = sorted(jobs, key=self._job_chain_display_sort_key, reverse=True)
         return next((job for job in sorted_jobs if job.status != "CANCELLED"), sorted_jobs[0])
 
+    def _rebuild_chain_links(self, jobs: list[JobRecord], preferred_root_id: str | None = None) -> None:
+        if not jobs:
+            return
+        display_order = sorted(jobs, key=self._job_chain_display_sort_key, reverse=True)
+        chronological_order = list(reversed(display_order))
+        root_id = chronological_order[0].job_id
+        for index, job in enumerate(chronological_order):
+            job.continuation_root_job_id = None if job.job_id == root_id else root_id
+            job.continuation_order = index + 1
+            job.resumed_from_job_id = chronological_order[index - 1].job_id if index > 0 else None
+            self.database.upsert_job(job)
+
     def _clone_job(self, job: JobRecord) -> JobRecord:
         return job.model_copy(deep=True)
 
@@ -565,6 +577,7 @@ class JobService:
         missing_job_ids = [job_id for job_id in ordered_job_ids if job_id not in jobs_by_id]
         if missing_job_ids:
             raise SSHError(f"Unknown job ids: {', '.join(missing_job_ids)}")
+        original_chain_ids = {self._job_chain_id(jobs_by_id[job_id]) for job_id in ordered_job_ids}
         target_chain_jobs = [job for job in all_jobs if self._job_chain_id(job) == target_chain_id]
         target_root_exists = target_chain_id in jobs_by_id or bool(target_chain_jobs)
         if not target_root_exists:
@@ -576,14 +589,30 @@ class JobService:
             if job.job_id not in set(ordered_job_ids)
         ]
         display_order = [jobs_by_id[job_id] for job_id in ordered_job_ids] + omitted_target_jobs
-        chronological_order = list(reversed(display_order))
+        self._rebuild_chain_links(display_order, preferred_root_id=target_chain_id)
 
-        for index, job in enumerate(chronological_order):
-            job.continuation_root_job_id = target_chain_id
-            job.continuation_order = index + 1
-            job.resumed_from_job_id = chronological_order[index - 1].job_id if index > 0 else None
-            self.database.upsert_job(job)
+        updated_jobs = self.database.list_jobs()
+        for chain_id in original_chain_ids - {target_chain_id}:
+            remaining_jobs = [job for job in updated_jobs if self._job_chain_id(job) == chain_id]
+            self._rebuild_chain_links(remaining_jobs, preferred_root_id=chain_id)
 
+        return self.list_jobs()
+
+    def detach_job_from_chain(self, job_id: str) -> JobListResponse:
+        job = self.database.get_job(job_id)
+        if job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        source_chain_id = self._job_chain_id(job)
+        source_chain_jobs = [item for item in self.database.list_jobs() if self._job_chain_id(item) == source_chain_id]
+        if len(source_chain_jobs) <= 1 and not job.continuation_root_job_id:
+            return self.list_jobs()
+
+        remaining_jobs = [item for item in source_chain_jobs if item.job_id != job.job_id]
+        job.continuation_root_job_id = None
+        job.resumed_from_job_id = None
+        job.continuation_order = None
+        self.database.upsert_job(job)
+        self._rebuild_chain_links(remaining_jobs, preferred_root_id=source_chain_id)
         return self.list_jobs()
 
     def insert_job_into_chain(self, job_id: str, target_job_id: str) -> JobListResponse:

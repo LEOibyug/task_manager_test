@@ -4,6 +4,7 @@ import {
   cancelJob,
   clearJobs,
   deleteJob,
+  detachJobFromChain,
   getConfig,
   insertJobIntoChain,
   listJobs,
@@ -75,11 +76,83 @@ function getLatestContinuableJob(jobs: JobRecord[]): JobRecord {
   return jobs.find((job) => job.status !== "CANCELLED") ?? fallback;
 }
 
+function rebuildChainLinks(jobMap: Map<string, JobRecord>, displayOrderedJobIds: string[]): void {
+  const chronologicalJobIds = [...displayOrderedJobIds].reverse();
+  const rootJobId = chronologicalJobIds[0];
+  chronologicalJobIds.forEach((jobId, index) => {
+    const job = jobMap.get(jobId);
+    if (!job || !rootJobId) {
+      return;
+    }
+    job.continuation_root_job_id = job.job_id === rootJobId ? null : rootJobId;
+    job.continuation_order = index + 1;
+    job.resumed_from_job_id = index > 0 ? chronologicalJobIds[index - 1] : null;
+  });
+}
+
+function optimisticallyReorderChain(
+  currentJobs: JobRecord[],
+  targetChainId: string,
+  displayOrderedJobIds: string[],
+): JobRecord[] {
+  const movingJobIds = new Set(displayOrderedJobIds);
+  const jobMap = new Map(currentJobs.map((job) => [job.job_id, { ...job }]));
+  const originalChainIds = new Set(
+    displayOrderedJobIds
+      .map((jobId) => {
+        const job = currentJobs.find((item) => item.job_id === jobId);
+        return job ? getJobChainId(job) : null;
+      })
+      .filter((chainId): chainId is string => Boolean(chainId)),
+  );
+  const groups = buildJobChainGroups(currentJobs);
+  const targetGroup = groups.find((group) => group.chainId === targetChainId);
+  const omittedTargetJobIds = (targetGroup?.jobs ?? [])
+    .map((job) => job.job_id)
+    .filter((jobId) => !movingJobIds.has(jobId));
+
+  rebuildChainLinks(jobMap, [...displayOrderedJobIds, ...omittedTargetJobIds]);
+
+  for (const chainId of originalChainIds) {
+    if (chainId === targetChainId) {
+      continue;
+    }
+    const sourceGroup = groups.find((group) => group.chainId === chainId);
+    const remainingJobIds = (sourceGroup?.jobs ?? [])
+      .map((job) => job.job_id)
+      .filter((jobId) => !movingJobIds.has(jobId));
+    rebuildChainLinks(jobMap, remainingJobIds);
+  }
+
+  return currentJobs.map((job) => jobMap.get(job.job_id) ?? job);
+}
+
+function optimisticallyDetachJob(currentJobs: JobRecord[], jobId: string): JobRecord[] {
+  const sourceJob = currentJobs.find((job) => job.job_id === jobId);
+  if (!sourceJob) {
+    return currentJobs;
+  }
+  const sourceChainId = getJobChainId(sourceJob);
+  const sourceGroup = buildJobChainGroups(currentJobs).find((group) => group.chainId === sourceChainId);
+  const jobMap = new Map(currentJobs.map((job) => [job.job_id, { ...job }]));
+  const detached = jobMap.get(jobId);
+  if (detached) {
+    detached.continuation_root_job_id = null;
+    detached.resumed_from_job_id = null;
+    detached.continuation_order = null;
+  }
+  const remainingJobIds = (sourceGroup?.jobs ?? [])
+    .map((job) => job.job_id)
+    .filter((item) => item !== jobId);
+  rebuildChainLinks(jobMap, remainingJobIds);
+  return currentJobs.map((job) => jobMap.get(job.job_id) ?? job);
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [selectedJob, setSelectedJob] = useState<JobRecord | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("config");
+  const [activeTab, setActiveTab] = useState<TabId>("jobs");
   const [banner, setBanner] = useState<string>("尚未建立实时状态连接。");
   const [commandLogs, setCommandLogs] = useState<Array<{ payload: CommandLogEventPayload; timestamp: string }>>([]);
   const [activeOperationIds, setActiveOperationIds] = useState<string[]>([]);
@@ -239,10 +312,10 @@ export default function App() {
   }, []);
 
   const tabs = useMemo(() => [
-    { id: "config" as const, label: "配置" },
-    { id: "experiments" as const, label: "实验" },
-    { id: "jobs" as const, label: "任务" },
-  ], []);
+    { id: "jobs" as const, label: "任务", badge: jobs.length > 0 ? String(jobs.length) : null },
+    { id: "experiments" as const, label: "实验", badge: experimentCache ? String(experimentCache.length) : null },
+    { id: "config" as const, label: "配置", badge: null },
+  ], [experimentCache, jobs.length]);
 
   function beginPendingRequest(label: string, detail: string): string {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -447,17 +520,46 @@ export default function App() {
     if (displayOrderedJobIds.length === 0) {
       return;
     }
-    setChainInsertingJobIds((current) => Array.from(new Set([...current, ...displayOrderedJobIds])));
+    const previousJobs = jobs;
+    const optimisticJobs = optimisticallyReorderChain(previousJobs, targetChainId, displayOrderedJobIds);
+    setJobs(optimisticJobs);
+    setSelectedJob((current) =>
+      current ? optimisticJobs.find((job) => job.job_id === current.job_id) ?? current : current,
+    );
     try {
       await withPendingRequest("调整续训链", `正在更新续训链 ${targetChainId} 的任务顺序。`, async () => {
-        const response = await reorderJobChain(targetChainId, displayOrderedJobIds);
-        setJobs(response.jobs);
+        await reorderJobChain(targetChainId, displayOrderedJobIds);
       });
       setBanner(`续训链 ${targetChainId} 的顺序已更新。`);
     } catch (error) {
+      setJobs(previousJobs);
+      setSelectedJob((current) =>
+        current ? previousJobs.find((job) => job.job_id === current.job_id) ?? current : current,
+      );
       setBanner(`调整续训链失败：${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setChainInsertingJobIds((current) => current.filter((item) => !displayOrderedJobIds.includes(item)));
+    }
+  }
+
+  async function handleDetachFromChain(job: JobRecord) {
+    const previousJobs = jobs;
+    const optimisticJobs = optimisticallyDetachJob(previousJobs, job.job_id);
+    setJobs(optimisticJobs);
+    const optimisticSelected = optimisticJobs.find((item) => item.job_id === job.job_id) ?? null;
+    if (optimisticSelected) {
+      setSelectedJob(optimisticSelected);
+    }
+    try {
+      await withPendingRequest("移出续训链", `正在将任务 ${job.job_id} 移出当前续训链。`, async () => {
+        await detachJobFromChain(job.job_id);
+      });
+      setBanner(`任务 ${job.job_id} 已移出续训链。`);
+    } catch (error) {
+      setJobs(previousJobs);
+      const previousSelected = previousJobs.find((item) => item.job_id === job.job_id) ?? null;
+      if (previousSelected) {
+        setSelectedJob(previousSelected);
+      }
+      setBanner(`移出续训链失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -485,9 +587,23 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="topbar__title">
-          <h1>Exp-Queue-Manager</h1>
-          <p>远程实验队列管理</p>
+        <div className="topbar__main">
+          <div className="topbar__title">
+            <h1>Exp Queue</h1>
+            <p>远程实验队列管理</p>
+          </div>
+          <nav className="tab-bar" aria-label="主导航">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={activeTab === tab.id ? "tab-button active" : "tab-button"}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <span>{tab.label}</span>
+                {tab.badge ? <em>{tab.badge}</em> : null}
+              </button>
+            ))}
+          </nav>
         </div>
         <div className="topbar__status">
           <span className="pulse-dot" />
@@ -495,64 +611,55 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="tab-bar">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={activeTab === tab.id ? "tab-button active" : "tab-button"}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
-      {activeTab === "config" ? (
-        <ConfigurationPage
-          config={config}
-          onConfigChange={handleConfigChange}
-          onOperationStart={beginPendingRequest}
-          onOperationEnd={finishPendingRequest}
-        />
-      ) : null}
-      {activeTab === "experiments" ? (
-        <ExperimentsPage
-          config={config}
-          experiments={experimentCache}
-          onExperimentsChange={setExperimentCache}
-          onOperationStart={beginPendingRequest}
-          onOperationEnd={finishPendingRequest}
-        />
-      ) : null}
-      {activeTab === "jobs" ? (
-        <JobsPage
-          mainUsername={config.main_username}
-          jobs={jobs}
-          selectedJob={selectedJob}
-          selectedJobCache={selectedJob ? (jobLogCache[selectedJob.job_id] ?? null) : null}
-          onSelectJob={setSelectedJob}
-          onUpdateJobCache={updateJobLogCache}
-          onRefresh={handleRefreshJobs}
-          onClear={handleClearJobs}
-          onSync={handleSync}
-          onCancel={handleCancel}
-          onRetry={handleRetry}
-          onProactiveRetry={handleProactiveRetry}
-          onInsertIntoChain={handleInsertIntoChain}
-          onReorderChain={handleReorderChain}
-          onDelete={handleDeleteJob}
-          onAutoRetryChange={handleJobAutoRetryChange}
-          isRefreshing={isRefreshingJobs}
-          isClearing={isClearingJobs}
-          syncingJobIds={syncingJobIds}
-          cancellingJobIds={cancellingJobIds}
-          retryingJobIds={retryingJobIds}
-          proactiveRetryingJobIds={proactiveRetryingJobIds}
-          chainInsertingJobIds={chainInsertingJobIds}
-          deletingJobIds={deletingJobIds}
-          updatingAutoRetryJobIds={updatingAutoRetryJobIds}
-        />
-      ) : null}
+      <main className="page-content">
+        {activeTab === "config" ? (
+          <ConfigurationPage
+            config={config}
+            onConfigChange={handleConfigChange}
+            onOperationStart={beginPendingRequest}
+            onOperationEnd={finishPendingRequest}
+          />
+        ) : null}
+        {activeTab === "experiments" ? (
+          <ExperimentsPage
+            config={config}
+            experiments={experimentCache}
+            onExperimentsChange={setExperimentCache}
+            onOperationStart={beginPendingRequest}
+            onOperationEnd={finishPendingRequest}
+          />
+        ) : null}
+        {activeTab === "jobs" ? (
+          <JobsPage
+            mainUsername={config.main_username}
+            jobs={jobs}
+            selectedJob={selectedJob}
+            selectedJobCache={selectedJob ? (jobLogCache[selectedJob.job_id] ?? null) : null}
+            onSelectJob={setSelectedJob}
+            onUpdateJobCache={updateJobLogCache}
+            onRefresh={handleRefreshJobs}
+            onClear={handleClearJobs}
+            onSync={handleSync}
+            onCancel={handleCancel}
+            onRetry={handleRetry}
+            onProactiveRetry={handleProactiveRetry}
+            onInsertIntoChain={handleInsertIntoChain}
+            onReorderChain={handleReorderChain}
+            onDetachFromChain={handleDetachFromChain}
+            onDelete={handleDeleteJob}
+            onAutoRetryChange={handleJobAutoRetryChange}
+            isRefreshing={isRefreshingJobs}
+            isClearing={isClearingJobs}
+            syncingJobIds={syncingJobIds}
+            cancellingJobIds={cancellingJobIds}
+            retryingJobIds={retryingJobIds}
+            proactiveRetryingJobIds={proactiveRetryingJobIds}
+            chainInsertingJobIds={chainInsertingJobIds}
+            deletingJobIds={deletingJobIds}
+            updatingAutoRetryJobIds={updatingAutoRetryJobIds}
+          />
+        ) : null}
+      </main>
       <OperationConsole
         entries={commandLogs}
         activeOperationCount={activeOperationIds.length}

@@ -94,6 +94,10 @@ export async function reorderJobChain(targetChainId: string, orderedJobIds: stri
   });
 }
 
+export async function detachJobFromChain(jobId: string): Promise<JobsResponse> {
+  return requestJson<JobsResponse>(`/api/jobs/${jobId}/detach-chain`, { method: "PATCH" });
+}
+
 export async function submitJob(payload: {
   experiment_name: string;
   script_path: string;

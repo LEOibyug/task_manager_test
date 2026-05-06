@@ -726,6 +726,59 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertEqual(third.continuation_order, 3)
         self.assertEqual(third.resumed_from_job_id, "65002")
 
+    def test_detach_job_from_chain_makes_job_independent_and_repairs_remaining_chain(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="66001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="TIMEOUT",
+                continuation_order=1,
+            )
+        )
+        self.database.upsert_job(
+            JobRecord(
+                job_id="66002",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="TIMEOUT",
+                resumed_from_job_id="66001",
+                continuation_root_job_id="66001",
+                continuation_order=2,
+            )
+        )
+        self.database.upsert_job(
+            JobRecord(
+                job_id="66003",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="TIMEOUT",
+                resumed_from_job_id="66002",
+                continuation_root_job_id="66001",
+                continuation_order=3,
+            )
+        )
+
+        service.detach_job_from_chain("66002")
+
+        detached = self.database.get_job("66002")
+        root = self.database.get_job("66001")
+        tail = self.database.get_job("66003")
+        self.assertIsNone(detached.continuation_root_job_id)
+        self.assertIsNone(detached.resumed_from_job_id)
+        self.assertIsNone(detached.continuation_order)
+        self.assertIsNone(root.continuation_root_job_id)
+        self.assertIsNone(root.resumed_from_job_id)
+        self.assertEqual(root.continuation_order, 1)
+        self.assertEqual(tail.continuation_root_job_id, "66001")
+        self.assertEqual(tail.resumed_from_job_id, "66001")
+        self.assertEqual(tail.continuation_order, 2)
+
     def test_refresh_jobs_marks_timeout_as_timeout_status(self) -> None:
         commands = {
             ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(

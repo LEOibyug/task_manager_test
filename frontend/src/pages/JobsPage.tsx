@@ -38,6 +38,7 @@ interface JobsPageProps {
   onProactiveRetry: (job: JobRecord) => void;
   onInsertIntoChain: (job: JobRecord) => void;
   onReorderChain: (targetChainId: string, displayOrderedJobIds: string[]) => void;
+  onDetachFromChain: (job: JobRecord) => void;
   onDelete: (job: JobRecord) => void;
   onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   isRefreshing: boolean;
@@ -66,6 +67,7 @@ export function JobsPage({
   onProactiveRetry,
   onInsertIntoChain,
   onReorderChain,
+  onDetachFromChain,
   onDelete,
   onAutoRetryChange,
   isRefreshing,
@@ -134,6 +136,9 @@ export function JobsPage({
             </button>
           ))}
         </div>
+        <p className="helper-text compact-helper-text">
+          拖拽规则：拖到链条标题=入组；拖到同链任务行=调整顺序；拖到“移出续训链”区域=出组。
+        </p>
         <JobTable
           jobs={visibleJobs}
           mainUsername={mainUsername}
@@ -145,6 +150,7 @@ export function JobsPage({
           onProactiveRetry={onProactiveRetry}
           onInsertIntoChain={onInsertIntoChain}
           onReorderChain={onReorderChain}
+          onDetachFromChain={onDetachFromChain}
           onDelete={onDelete}
           onAutoRetryChange={onAutoRetryChange}
           syncingJobIds={syncingJobIds}
