@@ -127,6 +127,12 @@ needs_backend_install() {
     return 0
   fi
 
+  local editable_pth
+  editable_pth="$(find "$VENV_DIR/lib" -path '*/site-packages/__editable__.exp_queue_manager_backend-*.pth' -type f -print -quit 2>/dev/null || true)"
+  if [[ -n "$editable_pth" ]] && ! grep -qxF "$BACKEND_DIR" "$editable_pth"; then
+    return 0
+  fi
+
   if [[ ! -f "$BACKEND_DEPS_STAMP" ]]; then
     return 0
   fi
@@ -254,4 +260,4 @@ print_step "Starting Exp-Queue-Manager"
 printf 'Open http://%s:%s in your browser.\n' "$HOST" "$PORT"
 
 cd "$ROOT_DIR"
-exec "$VENV_UVICORN" app.main:app --host "$HOST" --port "$PORT" --app-dir "$BACKEND_DIR"
+exec "$VENV_PYTHON" -m uvicorn app.main:app --host "$HOST" --port "$PORT" --app-dir "$BACKEND_DIR"
