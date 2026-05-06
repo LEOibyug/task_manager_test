@@ -19,6 +19,8 @@ from app.schemas import (
     ConnectionCheckResult,
     EvalLogResponse,
     JobAutoRetryUpdateRequest,
+    JobChainInsertRequest,
+    JobChainReorderRequest,
     LogResponse,
     OutputTreeResponse,
     RefreshJobsResponse,
@@ -246,6 +248,65 @@ async def update_job_auto_retry(
             request.auto_retry_enabled,
         )
         logger({"stage": "operation_end", "message": f"任务 {job_id} 的自动续训配置已保存"})
+        await container.broadcaster.broadcast(
+            container.scheduler.build_jobs_refreshed_event(result.jobs)
+        )
+        return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/jobs/{job_id}/chain", response_model=RefreshJobsResponse)
+async def insert_job_into_chain(
+    job_id: str,
+    request: JobChainInsertRequest,
+    container: AppContainer = Depends(get_container),
+) -> RefreshJobsResponse:
+    loop = asyncio.get_running_loop()
+    _, logger = build_command_logger(container, loop, "job-chain-insert")
+    logger(
+        {
+            "stage": "operation_start",
+            "message": f"正在将任务 {job_id} 插入任务 {request.target_job_id} 所在续训链",
+        }
+    )
+    try:
+        result = await run_in_threadpool(
+            container.job_service.insert_job_into_chain,
+            job_id,
+            request.target_job_id,
+        )
+        logger({"stage": "operation_end", "message": f"任务 {job_id} 的续训链归属已更新"})
+        await container.broadcaster.broadcast(
+            container.scheduler.build_jobs_refreshed_event(result.jobs)
+        )
+        return RefreshJobsResponse(jobs=result.jobs, refreshed_at=result.refreshed_at)
+    except SSHError as exc:
+        logger({"stage": "operation_error", "message": str(exc)})
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/jobs/chain-order", response_model=RefreshJobsResponse)
+async def reorder_job_chain(
+    request: JobChainReorderRequest,
+    container: AppContainer = Depends(get_container),
+) -> RefreshJobsResponse:
+    loop = asyncio.get_running_loop()
+    _, logger = build_command_logger(container, loop, "job-chain-reorder")
+    logger(
+        {
+            "stage": "operation_start",
+            "message": f"正在更新续训链 {request.target_chain_id} 的任务顺序",
+        }
+    )
+    try:
+        result = await run_in_threadpool(
+            container.job_service.reorder_job_chain,
+            request.target_chain_id,
+            request.ordered_job_ids,
+        )
+        logger({"stage": "operation_end", "message": f"续训链 {request.target_chain_id} 的任务顺序已更新"})
         await container.broadcaster.broadcast(
             container.scheduler.build_jobs_refreshed_event(result.jobs)
         )

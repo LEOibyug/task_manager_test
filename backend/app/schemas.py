@@ -71,6 +71,7 @@ class JobRecord(BaseModel):
     last_error: str | None = None
     resumed_from_job_id: str | None = None
     continuation_root_job_id: str | None = None
+    continuation_order: int | None = None
     auto_retry_enabled: bool = True
 
 
@@ -89,6 +90,15 @@ class SubmitJobRequest(BaseModel):
 
 class JobAutoRetryUpdateRequest(BaseModel):
     auto_retry_enabled: bool
+
+
+class JobChainInsertRequest(BaseModel):
+    target_job_id: str
+
+
+class JobChainReorderRequest(BaseModel):
+    target_chain_id: str
+    ordered_job_ids: list[str] = Field(min_length=1)
 
 
 class SubmitJobResponse(BaseModel):

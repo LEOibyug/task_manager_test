@@ -1,4 +1,5 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
+import type { DragEvent } from "react";
 
 import type { JobRecord } from "../types";
 import { buildJobChainGroups } from "../utils/jobChain";
@@ -13,12 +14,15 @@ interface JobTableProps {
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
   onProactiveRetry: (job: JobRecord) => void;
+  onInsertIntoChain: (job: JobRecord) => void;
+  onReorderChain: (targetChainId: string, displayOrderedJobIds: string[]) => void;
   onDelete: (job: JobRecord) => void;
   onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   syncingJobIds: string[];
   cancellingJobIds: string[];
   retryingJobIds: string[];
   proactiveRetryingJobIds: string[];
+  chainInsertingJobIds: string[];
   deletingJobIds: string[];
   updatingAutoRetryJobIds: string[];
 }
@@ -32,15 +36,22 @@ export function JobTable({
   onCancel,
   onRetry,
   onProactiveRetry,
+  onInsertIntoChain,
+  onReorderChain,
   onDelete,
   onAutoRetryChange,
   syncingJobIds,
   cancellingJobIds,
   retryingJobIds,
   proactiveRetryingJobIds,
+  chainInsertingJobIds,
   deletingJobIds,
   updatingAutoRetryJobIds,
 }: JobTableProps) {
+  const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
+  const [dragOverJobId, setDragOverJobId] = useState<string | null>(null);
+  const [dragOverChainId, setDragOverChainId] = useState<string | null>(null);
+
   function isTimeoutJob(job: JobRecord) {
     return job.status === "TIMEOUT" || (job.last_error ?? "").toUpperCase().includes("TIMEOUT");
   }
@@ -48,6 +59,42 @@ export function JobTable({
   function isProactiveTimeoutJob(job: JobRecord) {
     const marker = job.last_error ?? "";
     return job.status === "TIMEOUT" && (marker.includes("主动超时") || marker.toUpperCase().includes("ACTIVE_TIMEOUT"));
+  }
+
+  function buildDropOrder(targetJobs: JobRecord[], draggedJob: JobRecord, targetJob: JobRecord | null) {
+    const existingIds = targetJobs.map((item) => item.job_id);
+    const withoutDragged = targetJobs.filter((item) => item.job_id !== draggedJob.job_id);
+    const targetIndex = targetJob
+      ? withoutDragged.findIndex((item) => item.job_id === targetJob.job_id)
+      : 0;
+    const insertIndex = targetIndex >= 0 ? targetIndex : withoutDragged.length;
+    const nextJobs = [...withoutDragged];
+    nextJobs.splice(insertIndex, 0, draggedJob);
+    const nextIds = nextJobs.map((item) => item.job_id);
+    return nextIds.every((jobId, index) => jobId === existingIds[index]) && nextIds.length === existingIds.length
+      ? null
+      : nextIds;
+  }
+
+  function handleDropIntoGroup(
+    event: DragEvent,
+    group: ReturnType<typeof buildJobChainGroups>[number],
+    targetJob: JobRecord | null,
+  ) {
+    event.preventDefault();
+    const sourceJobId = event.dataTransfer.getData("text/plain") || draggedJobId;
+    const draggedJob = jobs.find((item) => item.job_id === sourceJobId);
+    setDragOverJobId(null);
+    setDragOverChainId(null);
+    setDraggedJobId(null);
+    if (!draggedJob) {
+      return;
+    }
+    const nextOrder = buildDropOrder(group.jobs, draggedJob, targetJob);
+    if (!nextOrder) {
+      return;
+    }
+    onReorderChain(group.chainId, nextOrder);
   }
 
   const chainGroups = buildJobChainGroups(jobs);
@@ -75,7 +122,24 @@ export function JobTable({
             return (
               <Fragment key={group.chainId}>
                 {group.isChain ? (
-                  <tr className="job-chain-header">
+                  <tr
+                    className={[
+                      "job-chain-header",
+                      draggedJobId && dragOverChainId === group.chainId && dragOverJobId === null ? "is-drag-over" : "",
+                    ].filter(Boolean).join(" ")}
+                    onDragOver={(event) => {
+                      if (!draggedJobId) {
+                        return;
+                      }
+                      event.preventDefault();
+                      setDragOverChainId(group.chainId);
+                      setDragOverJobId(null);
+                    }}
+                    onDragLeave={() => {
+                      setDragOverChainId(null);
+                    }}
+                    onDrop={(event) => handleDropIntoGroup(event, group, null)}
+                  >
                     <td colSpan={9}>
                       <div className="job-chain-summary">
                         <span>续训链 {group.chainId}</span>
@@ -93,6 +157,7 @@ export function JobTable({
             const isCancelling = cancellingJobIds.includes(job.job_id);
             const isRetrying = retryingJobIds.includes(job.job_id);
             const isProactiveRetrying = proactiveRetryingJobIds.includes(job.job_id);
+            const isChainInserting = chainInsertingJobIds.includes(job.job_id);
             const isDeleting = deletingJobIds.includes(job.job_id);
             const isUpdatingAutoRetry = updatingAutoRetryJobIds.includes(job.job_id);
             const isMainAccountJob = job.account === mainUsername;
@@ -105,10 +170,33 @@ export function JobTable({
             return (
             <tr
               key={job.job_id}
+              draggable
               className={[
                 selectedJobId === job.job_id ? "is-selected" : "",
                 group.isChain ? "job-chain-row" : "",
+                draggedJobId === job.job_id ? "is-dragging" : "",
+                draggedJobId && dragOverJobId === job.job_id ? "is-drag-over" : "",
               ].filter(Boolean).join(" ")}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", job.job_id);
+                setDraggedJobId(job.job_id);
+              }}
+              onDragEnd={() => {
+                setDraggedJobId(null);
+                setDragOverJobId(null);
+                setDragOverChainId(null);
+              }}
+              onDragOver={(event) => {
+                if (!draggedJobId || draggedJobId === job.job_id) {
+                  return;
+                }
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setDragOverChainId(group.chainId);
+                setDragOverJobId(job.job_id);
+              }}
+              onDrop={(event) => handleDropIntoGroup(event, group, job)}
               onClick={() => onSelect(job)}
             >
               <td>
@@ -136,7 +224,7 @@ export function JobTable({
                     <input
                       type="checkbox"
                       checked={job.auto_retry_enabled}
-                      disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting || isUpdatingAutoRetry}
+                      disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting || isUpdatingAutoRetry}
                       onChange={(event) => onAutoRetryChange(job, event.target.checked)}
                     />
                     <span className="slide-switch__track" aria-hidden="true">
@@ -163,7 +251,7 @@ export function JobTable({
                   {showRetry ? (
                     <button
                       className="ghost-button compact-action-button"
-                      disabled={!canRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                      disabled={!canRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onRetry(job);
@@ -176,7 +264,7 @@ export function JobTable({
                     <button
                       className="ghost-button compact-action-button"
                       title="先主动停止当前运行任务，并以续训链逻辑提交新任务。"
-                      disabled={!canProactiveRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                      disabled={!canProactiveRetry || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onProactiveRetry(job);
@@ -188,7 +276,7 @@ export function JobTable({
                   {!isMainAccountJob ? (
                     <button
                       className="ghost-button compact-action-button"
-                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                      disabled={job.status !== "COMPLETED" || job.synced || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
                       onClick={(event) => {
                         event.stopPropagation();
                         onSync(job);
@@ -198,8 +286,19 @@ export function JobTable({
                     </button>
                   ) : null}
                   <button
+                    className="ghost-button compact-action-button"
+                    title="将该任务或该任务所在续训链插入到另一条续训链，便于合并查看全局评估数据。"
+                    disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onInsertIntoChain(job);
+                    }}
+                  >
+                    {isChainInserting ? "插入中..." : "插入链"}
+                  </button>
+                  <button
                     className="ghost-button danger-button compact-action-button"
-                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                    disabled={!["RUNNING", "PENDING"].includes(job.status) || isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCancel(job);
@@ -209,7 +308,7 @@ export function JobTable({
                   </button>
                   <button
                     className="ghost-button danger-button compact-action-button"
-                    disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isDeleting}
+                    disabled={isSyncing || isCancelling || isRetrying || isProactiveRetrying || isChainInserting || isDeleting}
                     onClick={(event) => {
                       event.stopPropagation();
                       onDelete(job);

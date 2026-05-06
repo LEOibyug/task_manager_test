@@ -36,6 +36,8 @@ interface JobsPageProps {
   onCancel: (job: JobRecord) => void;
   onRetry: (job: JobRecord) => void;
   onProactiveRetry: (job: JobRecord) => void;
+  onInsertIntoChain: (job: JobRecord) => void;
+  onReorderChain: (targetChainId: string, displayOrderedJobIds: string[]) => void;
   onDelete: (job: JobRecord) => void;
   onAutoRetryChange: (job: JobRecord, enabled: boolean) => void;
   isRefreshing: boolean;
@@ -44,6 +46,7 @@ interface JobsPageProps {
   cancellingJobIds: string[];
   retryingJobIds: string[];
   proactiveRetryingJobIds: string[];
+  chainInsertingJobIds: string[];
   deletingJobIds: string[];
   updatingAutoRetryJobIds: string[];
 }
@@ -61,6 +64,8 @@ export function JobsPage({
   onCancel,
   onRetry,
   onProactiveRetry,
+  onInsertIntoChain,
+  onReorderChain,
   onDelete,
   onAutoRetryChange,
   isRefreshing,
@@ -69,6 +74,7 @@ export function JobsPage({
   cancellingJobIds,
   retryingJobIds,
   proactiveRetryingJobIds,
+  chainInsertingJobIds,
   deletingJobIds,
   updatingAutoRetryJobIds,
 }: JobsPageProps) {
@@ -137,12 +143,15 @@ export function JobsPage({
           onCancel={onCancel}
           onRetry={onRetry}
           onProactiveRetry={onProactiveRetry}
+          onInsertIntoChain={onInsertIntoChain}
+          onReorderChain={onReorderChain}
           onDelete={onDelete}
           onAutoRetryChange={onAutoRetryChange}
           syncingJobIds={syncingJobIds}
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
           proactiveRetryingJobIds={proactiveRetryingJobIds}
+          chainInsertingJobIds={chainInsertingJobIds}
           deletingJobIds={deletingJobIds}
           updatingAutoRetryJobIds={updatingAutoRetryJobIds}
         />

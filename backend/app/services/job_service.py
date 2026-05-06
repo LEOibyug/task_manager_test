@@ -150,6 +150,27 @@ class JobService:
         marker = (job.last_error or "").upper()
         return job.status == "TIMEOUT" and ("ACTIVE_TIMEOUT" in marker or "主动超时" in marker)
 
+    def _job_chain_id(self, job: JobRecord) -> str:
+        return job.continuation_root_job_id or job.job_id
+
+    def _job_sort_key(self, job: JobRecord) -> tuple[float, int]:
+        timestamp = job.start_time.timestamp() if job.start_time is not None else 0.0
+        try:
+            numeric_id = int(job.job_id)
+        except ValueError:
+            numeric_id = 0
+        return timestamp, numeric_id
+
+    def _job_chain_display_sort_key(self, job: JobRecord) -> tuple[int, float, int]:
+        if job.continuation_order is not None:
+            return job.continuation_order, 0.0, 0
+        timestamp, numeric_id = self._job_sort_key(job)
+        return 0, int(timestamp), numeric_id
+
+    def _latest_continuable_job(self, jobs: list[JobRecord]) -> JobRecord:
+        sorted_jobs = sorted(jobs, key=self._job_chain_display_sort_key, reverse=True)
+        return next((job for job in sorted_jobs if job.status != "CANCELLED"), sorted_jobs[0])
+
     def _clone_job(self, job: JobRecord) -> JobRecord:
         return job.model_copy(deep=True)
 
@@ -191,6 +212,8 @@ class JobService:
             merged.resumed_from_job_id = current_job.resumed_from_job_id
         if merged.continuation_root_job_id is None and current_job.continuation_root_job_id is not None:
             merged.continuation_root_job_id = current_job.continuation_root_job_id
+        if merged.continuation_order is None and current_job.continuation_order is not None:
+            merged.continuation_order = current_job.continuation_order
         merged.auto_retry_enabled = current_job.auto_retry_enabled
         if self._is_proactive_timeout_job(current_job) and merged.status in {"RUNNING", "PENDING", "CANCELLED", "UNKNOWN"}:
             merged.status = "TIMEOUT"
@@ -458,6 +481,9 @@ class JobService:
             )
             if resumed_from_job
             else None,
+            continuation_order=(resumed_from_job.continuation_order + 1)
+            if resumed_from_job and resumed_from_job.continuation_order is not None
+            else None,
             auto_retry_enabled=resumed_from_job.auto_retry_enabled if resumed_from_job else request.auto_retry_enabled,
         )
         self.database.upsert_job(job)
@@ -529,6 +555,66 @@ class JobService:
             raise SSHError(f"Unknown job id: {job_id}")
         job.auto_retry_enabled = enabled
         self.database.upsert_job(job)
+        return self.list_jobs()
+
+    def reorder_job_chain(self, target_chain_id: str, ordered_job_ids: list[str]) -> JobListResponse:
+        if len(set(ordered_job_ids)) != len(ordered_job_ids):
+            raise SSHError("Duplicate job ids are not allowed in chain order.")
+        all_jobs = self.database.list_jobs()
+        jobs_by_id = {job.job_id: job for job in all_jobs}
+        missing_job_ids = [job_id for job_id in ordered_job_ids if job_id not in jobs_by_id]
+        if missing_job_ids:
+            raise SSHError(f"Unknown job ids: {', '.join(missing_job_ids)}")
+        target_chain_jobs = [job for job in all_jobs if self._job_chain_id(job) == target_chain_id]
+        target_root_exists = target_chain_id in jobs_by_id or bool(target_chain_jobs)
+        if not target_root_exists:
+            raise SSHError(f"Unknown target chain id: {target_chain_id}")
+
+        omitted_target_jobs = [
+            job
+            for job in sorted(target_chain_jobs, key=self._job_chain_display_sort_key, reverse=True)
+            if job.job_id not in set(ordered_job_ids)
+        ]
+        display_order = [jobs_by_id[job_id] for job_id in ordered_job_ids] + omitted_target_jobs
+        chronological_order = list(reversed(display_order))
+
+        for index, job in enumerate(chronological_order):
+            job.continuation_root_job_id = target_chain_id
+            job.continuation_order = index + 1
+            job.resumed_from_job_id = chronological_order[index - 1].job_id if index > 0 else None
+            self.database.upsert_job(job)
+
+        return self.list_jobs()
+
+    def insert_job_into_chain(self, job_id: str, target_job_id: str) -> JobListResponse:
+        source_job = self.database.get_job(job_id)
+        if source_job is None:
+            raise SSHError(f"Unknown job id: {job_id}")
+        target_job = self.database.get_job(target_job_id)
+        if target_job is None:
+            raise SSHError(f"Unknown target job id: {target_job_id}")
+        if source_job.job_id == target_job.job_id:
+            raise SSHError("Cannot insert a job into its own continuation chain.")
+
+        all_jobs = self.database.list_jobs()
+        source_chain_id = self._job_chain_id(source_job)
+        target_chain_id = self._job_chain_id(target_job)
+        if source_chain_id == target_chain_id:
+            raise SSHError("The selected job is already in the target continuation chain.")
+
+        source_chain_jobs = [job for job in all_jobs if self._job_chain_id(job) == source_chain_id]
+        target_chain_jobs = [job for job in all_jobs if self._job_chain_id(job) == target_chain_id]
+        if not source_chain_jobs or not target_chain_jobs:
+            raise SSHError("Unable to resolve continuation chain members.")
+
+        target_root_job_id = target_chain_id
+        target_anchor = self._latest_continuable_job(target_chain_jobs)
+        for job in source_chain_jobs:
+            job.continuation_root_job_id = target_root_job_id
+            if job.job_id == source_job.job_id:
+                job.resumed_from_job_id = target_anchor.job_id
+            self.database.upsert_job(job)
+
         return self.list_jobs()
 
     def list_jobs(self) -> JobListResponse:

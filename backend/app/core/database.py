@@ -48,6 +48,7 @@ class Database:
                     last_error TEXT,
                     resumed_from_job_id TEXT,
                     continuation_root_job_id TEXT,
+                    continuation_order INTEGER,
                     auto_retry_enabled INTEGER NOT NULL DEFAULT 1
                 )
                 """
@@ -73,6 +74,7 @@ class Database:
             "preferred_gpu_node": "TEXT",
             "resumed_from_job_id": "TEXT",
             "continuation_root_job_id": "TEXT",
+            "continuation_order": "INTEGER",
             "auto_retry_enabled": "INTEGER NOT NULL DEFAULT 1",
         }
         for column_name, column_type in expected_columns.items():
@@ -101,6 +103,7 @@ class Database:
         synced = self._row_value(row, "synced")
         max_runtime_hours = self._row_value(row, "max_runtime_hours")
         auto_retry_enabled = self._row_value(row, "auto_retry_enabled")
+        continuation_order = self._row_value(row, "continuation_order")
         return JobRecord(
             job_id=str(row["job_id"]),
             account=str(row["account"]),
@@ -121,6 +124,7 @@ class Database:
             last_error=self._row_value(row, "last_error"),
             resumed_from_job_id=self._row_value(row, "resumed_from_job_id"),
             continuation_root_job_id=self._row_value(row, "continuation_root_job_id"),
+            continuation_order=int(continuation_order) if continuation_order is not None else None,
             auto_retry_enabled=bool(auto_retry_enabled) if auto_retry_enabled is not None else True,
         )
 
@@ -131,8 +135,8 @@ class Database:
                 INSERT INTO jobs (
                     job_id, account, experiment, script_path, preferred_gpu_node, status, start_time, runtime, nodes,
                     resource_usage, max_runtime_hours, log_path, log_path_template, job_name, output_path_hint, synced, last_error,
-                    resumed_from_job_id, continuation_root_job_id, auto_retry_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    resumed_from_job_id, continuation_root_job_id, continuation_order, auto_retry_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     account=excluded.account,
                     experiment=excluded.experiment,
@@ -152,6 +156,7 @@ class Database:
                     last_error=excluded.last_error,
                     resumed_from_job_id=excluded.resumed_from_job_id,
                     continuation_root_job_id=excluded.continuation_root_job_id,
+                    continuation_order=excluded.continuation_order,
                     auto_retry_enabled=excluded.auto_retry_enabled
                 """,
                 (
@@ -174,6 +179,7 @@ class Database:
                     job.last_error,
                     job.resumed_from_job_id,
                     job.continuation_root_job_id,
+                    job.continuation_order,
                     int(job.auto_retry_enabled),
                 ),
             )

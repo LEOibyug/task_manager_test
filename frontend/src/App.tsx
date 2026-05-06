@@ -5,9 +5,11 @@ import {
   clearJobs,
   deleteJob,
   getConfig,
+  insertJobIntoChain,
   listJobs,
   proactiveRetryJob,
   refreshJobs,
+  reorderJobChain,
   retryJob,
   setJobAutoRetry,
   syncJob,
@@ -27,7 +29,7 @@ import type {
   StatusEvent,
 } from "./types";
 import type { ExperimentSummary } from "./types";
-import { buildJobChainGroups } from "./utils/jobChain";
+import { buildJobChainGroups, getJobChainId } from "./utils/jobChain";
 
 const emptyConfig: AppConfig = {
   server_ip: "",
@@ -65,6 +67,14 @@ function createEmptyJobLogCacheEntry(jobId: string): JobLogCacheEntry {
   };
 }
 
+function getLatestContinuableJob(jobs: JobRecord[]): JobRecord {
+  const fallback = jobs[0];
+  if (!fallback) {
+    throw new Error("空续训链");
+  }
+  return jobs.find((job) => job.status !== "CANCELLED") ?? fallback;
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -81,6 +91,7 @@ export default function App() {
   const [cancellingJobIds, setCancellingJobIds] = useState<string[]>([]);
   const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
   const [proactiveRetryingJobIds, setProactiveRetryingJobIds] = useState<string[]>([]);
+  const [chainInsertingJobIds, setChainInsertingJobIds] = useState<string[]>([]);
   const [deletingJobIds, setDeletingJobIds] = useState<string[]>([]);
   const [updatingAutoRetryJobIds, setUpdatingAutoRetryJobIds] = useState<string[]>([]);
   const [jobLogCache, setJobLogCache] = useState<Record<string, JobLogCacheEntry>>({});
@@ -372,6 +383,84 @@ export default function App() {
     }
   }
 
+  async function handleInsertIntoChain(job: JobRecord) {
+    const sourceChainId = getJobChainId(job);
+    const targetGroups = buildJobChainGroups(jobs).filter((group) => group.chainId !== sourceChainId);
+    if (targetGroups.length === 0) {
+      setBanner("当前没有可插入的其它续训链或任务。");
+      return;
+    }
+    const optionLines = targetGroups.map((group, index) => {
+      const anchor = getLatestContinuableJob(group.jobs);
+      const chainLabel = group.isChain ? `续训链 ${group.chainId}` : `单任务 ${group.chainId}`;
+      return `${index + 1}. ${chainLabel} · 插入到 ${anchor.job_id} 后 · ${anchor.experiment}`;
+    });
+    const answer = window.prompt(
+      [
+        `将任务 ${job.job_id} 插入哪条续训链？`,
+        "可输入序号，或直接输入目标链中的任意任务 ID。",
+        "",
+        ...optionLines,
+      ].join("\n"),
+    );
+    if (!answer) {
+      return;
+    }
+    const trimmedAnswer = answer.trim();
+    const selectedIndex = Number.parseInt(trimmedAnswer, 10);
+    const selectedGroup =
+      String(selectedIndex) === trimmedAnswer && selectedIndex >= 1 && selectedIndex <= targetGroups.length
+        ? targetGroups[selectedIndex - 1]
+        : null;
+    const targetJobId = selectedGroup ? getLatestContinuableJob(selectedGroup.jobs).job_id : trimmedAnswer;
+    if (targetJobId === job.job_id) {
+      setBanner("不能将任务插入到自身所在链条。");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确定将任务 ${job.job_id} 插入到任务 ${targetJobId} 所在续训链吗？\n\n如果该任务本身已有后继续训任务，会一并移动到目标链，方便合并查看评估数据。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setChainInsertingJobIds((current) => Array.from(new Set([...current, job.job_id])));
+    try {
+      await withPendingRequest("插入续训链", `正在将任务 ${job.job_id} 插入任务 ${targetJobId} 所在续训链。`, async () => {
+        const response = await insertJobIntoChain(job.job_id, targetJobId);
+        setJobs(response.jobs);
+        const nextSelected = response.jobs.find((item) => item.job_id === job.job_id) ?? null;
+        if (nextSelected) {
+          setSelectedJob(nextSelected);
+        }
+      });
+      setBanner(`任务 ${job.job_id} 已插入目标续训链。`);
+    } catch (error) {
+      setBanner(`插入续训链失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setChainInsertingJobIds((current) => current.filter((item) => item !== job.job_id));
+    }
+  }
+
+  async function handleReorderChain(targetChainId: string, displayOrderedJobIds: string[]) {
+    if (displayOrderedJobIds.length === 0) {
+      return;
+    }
+    setChainInsertingJobIds((current) => Array.from(new Set([...current, ...displayOrderedJobIds])));
+    try {
+      await withPendingRequest("调整续训链", `正在更新续训链 ${targetChainId} 的任务顺序。`, async () => {
+        const response = await reorderJobChain(targetChainId, displayOrderedJobIds);
+        setJobs(response.jobs);
+      });
+      setBanner(`续训链 ${targetChainId} 的顺序已更新。`);
+    } catch (error) {
+      setBanner(`调整续训链失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setChainInsertingJobIds((current) => current.filter((item) => !displayOrderedJobIds.includes(item)));
+    }
+  }
+
   async function handleJobAutoRetryChange(job: JobRecord, enabled: boolean) {
     setUpdatingAutoRetryJobIds((current) => Array.from(new Set([...current, job.job_id])));
     const previousJobs = jobs;
@@ -449,6 +538,8 @@ export default function App() {
           onCancel={handleCancel}
           onRetry={handleRetry}
           onProactiveRetry={handleProactiveRetry}
+          onInsertIntoChain={handleInsertIntoChain}
+          onReorderChain={handleReorderChain}
           onDelete={handleDeleteJob}
           onAutoRetryChange={handleJobAutoRetryChange}
           isRefreshing={isRefreshingJobs}
@@ -457,6 +548,7 @@ export default function App() {
           cancellingJobIds={cancellingJobIds}
           retryingJobIds={retryingJobIds}
           proactiveRetryingJobIds={proactiveRetryingJobIds}
+          chainInsertingJobIds={chainInsertingJobIds}
           deletingJobIds={deletingJobIds}
           updatingAutoRetryJobIds={updatingAutoRetryJobIds}
         />

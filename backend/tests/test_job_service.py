@@ -645,6 +645,87 @@ class JobServiceTestCase(unittest.TestCase):
         self.assertTrue(self.database.get_job("60010").auto_retry_enabled)
         self.assertTrue(next(job for job in result.jobs if job.job_id == "60010").auto_retry_enabled)
 
+    def test_insert_job_into_existing_chain_merges_source_chain(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        self.database.upsert_job(
+            JobRecord(
+                job_id="63001",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="TIMEOUT",
+            )
+        )
+        self.database.upsert_job(
+            JobRecord(
+                job_id="63002",
+                account="worker1",
+                experiment="exp001",
+                script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                status="COMPLETED",
+                resumed_from_job_id="63001",
+                continuation_root_job_id="63001",
+            )
+        )
+        self.database.upsert_job(
+            JobRecord(
+                job_id="64001",
+                account="worker1",
+                experiment="exp001_finetune",
+                script_path="/srv/worker1/repo/experiments/exp001/finetune.sbatch",
+                status="TIMEOUT",
+            )
+        )
+        self.database.upsert_job(
+            JobRecord(
+                job_id="64002",
+                account="worker1",
+                experiment="exp001_finetune",
+                script_path="/srv/worker1/repo/experiments/exp001/finetune.sbatch",
+                status="COMPLETED",
+                resumed_from_job_id="64001",
+                continuation_root_job_id="64001",
+            )
+        )
+
+        result = service.insert_job_into_chain("64001", "63002")
+
+        merged_root = self.database.get_job("64001")
+        merged_child = self.database.get_job("64002")
+        self.assertEqual(merged_root.continuation_root_job_id, "63001")
+        self.assertEqual(merged_root.resumed_from_job_id, "63002")
+        self.assertEqual(merged_child.continuation_root_job_id, "63001")
+        self.assertEqual(merged_child.resumed_from_job_id, "64001")
+        self.assertEqual(len(result.jobs), 4)
+
+    def test_reorder_job_chain_updates_manual_order_and_resume_links(self) -> None:
+        gateway = InMemorySSHGateway()
+        service = JobService(self.config_service, gateway, self.database)
+        for job_id in ["65001", "65002", "65003"]:
+            self.database.upsert_job(
+                JobRecord(
+                    job_id=job_id,
+                    account="worker1",
+                    experiment="exp001",
+                    script_path="/srv/worker1/repo/experiments/exp001/train.sbatch",
+                    status="TIMEOUT",
+                    continuation_root_job_id="65001",
+                )
+            )
+
+        service.reorder_job_chain("65001", ["65003", "65002", "65001"])
+
+        first = self.database.get_job("65001")
+        second = self.database.get_job("65002")
+        third = self.database.get_job("65003")
+        self.assertEqual(first.continuation_order, 1)
+        self.assertIsNone(first.resumed_from_job_id)
+        self.assertEqual(second.continuation_order, 2)
+        self.assertEqual(second.resumed_from_job_id, "65001")
+        self.assertEqual(third.continuation_order, 3)
+        self.assertEqual(third.resumed_from_job_id, "65002")
+
     def test_refresh_jobs_marks_timeout_as_timeout_status(self) -> None:
         commands = {
             ("worker1", "::squeue -u \"worker1\" -h -o \"%i|%T|%M|%S|%N|%R\""): CommandResult(

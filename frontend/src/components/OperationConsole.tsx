@@ -14,6 +14,8 @@ function formatAction(action: string): string {
     "job-submit": "任务提交",
     "job-retry": "续训任务",
     "job-proactive-retry": "主动续训",
+    "job-chain-insert": "插入续训链",
+    "job-chain-reorder": "调整续训链",
     "job-cancel": "取消任务",
     "job-sync": "同步结果",
     "jobs-refresh": "刷新任务",

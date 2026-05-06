@@ -15,11 +15,32 @@ function jobNumericId(job: JobRecord): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+function hasManualChainOrder(jobs: JobRecord[]): boolean {
+  return jobs.some((job) => job.continuation_order !== null && job.continuation_order !== undefined);
+}
+
+function jobChainOrder(job: JobRecord): number {
+  return job.continuation_order ?? 0;
+}
+
 export function getJobChainId(job: JobRecord): string {
   return job.continuation_root_job_id || job.job_id;
 }
 
 export function sortJobsByRecency(jobs: JobRecord[]): JobRecord[] {
+  if (hasManualChainOrder(jobs)) {
+    return [...jobs].sort((a, b) => {
+      const orderDiff = jobChainOrder(b) - jobChainOrder(a);
+      if (orderDiff !== 0) {
+        return orderDiff;
+      }
+      const timeDiff = jobTimestamp(b) - jobTimestamp(a);
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      return jobNumericId(b) - jobNumericId(a);
+    });
+  }
   return [...jobs].sort((a, b) => {
     const timeDiff = jobTimestamp(b) - jobTimestamp(a);
     if (timeDiff !== 0) {

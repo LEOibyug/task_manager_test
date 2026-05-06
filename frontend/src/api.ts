@@ -78,6 +78,22 @@ export async function setJobAutoRetry(jobId: string, enabled: boolean): Promise<
   });
 }
 
+export async function insertJobIntoChain(jobId: string, targetJobId: string): Promise<JobsResponse> {
+  return requestJson<JobsResponse>(`/api/jobs/${jobId}/chain`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ target_job_id: targetJobId }),
+  });
+}
+
+export async function reorderJobChain(targetChainId: string, orderedJobIds: string[]): Promise<JobsResponse> {
+  return requestJson<JobsResponse>("/api/jobs/chain-order", {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ target_chain_id: targetChainId, ordered_job_ids: orderedJobIds }),
+  });
+}
+
 export async function submitJob(payload: {
   experiment_name: string;
   script_path: string;

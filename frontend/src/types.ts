@@ -45,6 +45,7 @@ export interface JobRecord {
   last_error: string | null;
   resumed_from_job_id: string | null;
   continuation_root_job_id: string | null;
+  continuation_order: number | null;
   auto_retry_enabled: boolean;
 }
 
