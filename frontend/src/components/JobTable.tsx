@@ -71,6 +71,7 @@ export function JobTable({
         <tbody>
           {chainGroups.map((group) => {
             const chronologicalJobs = [...group.jobs].reverse();
+            const latestContinuableJob = group.jobs.find((item) => item.status !== "CANCELLED") ?? group.summaryJob;
             return (
               <Fragment key={group.chainId}>
                 {group.isChain ? (
@@ -80,6 +81,9 @@ export function JobTable({
                         <span>续训链 {group.chainId}</span>
                         <span>共 {group.jobs.length} 次</span>
                         <span>最新任务 {group.summaryJob.job_id}</span>
+                        {latestContinuableJob.job_id !== group.summaryJob.job_id ? (
+                          <span>当前续训点 {latestContinuableJob.job_id}</span>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -92,8 +96,8 @@ export function JobTable({
             const isDeleting = deletingJobIds.includes(job.job_id);
             const isUpdatingAutoRetry = updatingAutoRetryJobIds.includes(job.job_id);
             const isMainAccountJob = job.account === mainUsername;
-            const canRetry = isTimeoutJob(job) && group.summaryJob.job_id === job.job_id;
-            const canProactiveRetry = job.status === "RUNNING" && group.summaryJob.job_id === job.job_id;
+            const canRetry = isTimeoutJob(job) && latestContinuableJob.job_id === job.job_id;
+            const canProactiveRetry = job.status === "RUNNING" && latestContinuableJob.job_id === job.job_id;
             const showRetry = canRetry || isRetrying;
             const showProactiveRetry = canProactiveRetry || isProactiveRetrying;
             const chainIndex = chronologicalJobs.findIndex((item) => item.job_id === job.job_id) + 1;
